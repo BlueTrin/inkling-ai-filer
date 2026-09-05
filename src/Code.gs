@@ -248,18 +248,25 @@ function promptText_(allowedFolders, samples, folderCreation) {
     'Existing folders, with examples of what is already filed in each:\n' +
     lines.join('\n') + '\n' +
     'Reply with JSON only, no prose, no code fences:\n' +
-    '{"name":"YYYY-MM-DD short topic","folder":"<one of the folders above, or empty>",' +
-    '"confidence":0.0-1.0,"summary":"one sentence","suggested_folder":"","ambiguous":[]}\n' +
+    '{"name":"YYYY-MM-DD short topic",' +
+    '"folder":"<exactly one of the folders above, or \"\" if none of them fits>",' +
+    '"confidence":0.0-1.0,' +
+    '"summary":"one sentence",' +
+    (folderCreation === 'off' ? '' :
+      '"suggested_folder":"<the folder that SHOULD exist for this page, ' +
+      'as a path such as Admin/Insurance — always fill this in when \"folder\" is empty>",') +
+    '"ambiguous":["<folders that fit equally well, if you cannot choose>"]}\n' +
     'Use the date written or printed on the page if there is one, otherwise today. ' +
     'If the page is illegible or does not fit any folder, set confidence below 0.5.\n' +
     'If two or more folders fit equally well and you cannot choose between them, ' +
     'list those folders in "ambiguous" and set confidence below 0.5. ' +
-    'Do not pick one arbitrarily.\n';
+    'Do not pick one arbitrarily. Otherwise use an empty list.\n';
 
   if (folderCreation !== 'off') {
-    s += 'If no existing folder fits, leave "folder" empty and put the folder that ' +
-         'should exist in "suggested_folder", as a path such as "Admin/Insurance". ' +
-         'It will not be created automatically.\n';
+    s += 'Whenever no existing folder fits, "folder" must be empty AND ' +
+         '"suggested_folder" must name the folder that should exist. ' +
+         'Never leave "suggested_folder" empty while "folder" is also empty. ' +
+         'Nothing is created automatically — the suggestion is reviewed by a human.\n';
   }
   return s;
 }

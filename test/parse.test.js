@@ -154,7 +154,13 @@ test('promptText_', async (t) => {
 
   await t.test('mentions suggested_folder only when creation is not off', () => {
     assert.ok(gs.promptText_(FOLDERS, {}, 'propose').includes('suggested_folder'));
-    assert.ok(!gs.promptText_(FOLDERS, {}, 'off').includes('should exist in'));
+    assert.ok(!gs.promptText_(FOLDERS, {}, 'off').includes('suggested_folder'));
+  });
+
+  await t.test('never shows an empty suggested_folder in the JSON template', () => {
+    // An empty example value anchors the model to copy it back empty, which is
+    // exactly what happened on the first live run.
+    assert.ok(!gs.promptText_(FOLDERS, {}, 'propose').includes('"suggested_folder":""'));
   });
 });
 
