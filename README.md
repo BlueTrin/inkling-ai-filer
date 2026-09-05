@@ -151,10 +151,33 @@ key back and it files on the next run.
 fifteen minutes. Polling more often costs nothing extra — an empty check is
 free — so the interval is a latency choice, not a cost one.
 
-**9. Point a scanner at `Inbox`.** Any scanner app that can auto-upload to
-Drive will do, including the Drive app's own. Auto-upload usually applies only
-to scans made after you switch it on, so anything already in the app needs
-uploading by hand once.
+**9. Point a scanner at `Inbox`.** The filer only ever looks in one folder, so
+the last piece is getting scans into it without you thinking about it.
+
+What you want is an app that uploads to a *fixed* Drive folder on its own —
+not one that merely offers to save to Drive, which leaves you picking the
+destination every time and defeats the point. Two that work:
+
+- **The Google Drive app's own scanner** (iOS and Android, free). Scans
+  straight into Drive as a searchable PDF. The catch is that you choose the
+  destination per scan, so it is one tap more and one more chance to put it
+  somewhere else.
+- **Scanner Pro** (Readdle, iOS), or any app with the same feature. Connect
+  your Drive account once, set the destination to `Notes/Inbox`, turn on auto
+  upload, and every future scan lands there by itself. This is the setup the
+  design assumes.
+
+Worth avoiding: apps that save to their own cloud first — Adobe Scan and
+similar — because getting the file to Drive stays a manual step, which is
+precisely the work you are trying to remove.
+
+Auto-upload almost always applies only to scans made *after* you switch it on,
+so anything already sitting in the app has to be uploaded by hand once.
+
+Nothing about this is scanner-specific, though. `Inbox` is just a Drive folder,
+and anything that arrives in it gets filed — a PDF you drag in from your
+desktop, an emailed statement you saved to Drive, an e-ink notebook that syncs
+there. A phone scanner is the most common way to fill it, not the only one.
 
 ## Living with it
 
