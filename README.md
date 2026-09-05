@@ -327,8 +327,8 @@ one glance.
 ```
 
 Budget per document rather than per page: that figure holds up, but real
-paperwork is rarely one page. Measured on live runs, a one-page letter
-came to about 4,200 input tokens and a multi-page bill to about 9,500 —
+paperwork is rarely one page. Measured on live runs, a one-page letter came
+to about 4,200 input tokens and a multi-page bill to about 9,500 —
 half a cent and a cent respectively. Input dominates completely; output is a
 hundred-odd tokens either way.
 
