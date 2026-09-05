@@ -50,6 +50,7 @@ function cfg_() {
     samplesPer:    num('SAMPLES_PER_FOLDER', 3),
     noteFile:      props.getProperty('NOTE_FILE') || 'README.md',
     noteChars:     num('NOTE_CHARS', 300),
+    dateFormat:    props.getProperty('DATE_FORMAT') || 'yyyy-mm-dd hh:mm:ss',
 
     // "propose" records a suggested folder without creating it. "off" drops the
     // suggestion entirely. "auto" is not implemented; see the design note.
@@ -550,4 +551,10 @@ function log_(cfg, status, msg, v) {
   const row = indexRow_(cfg, status, msg, v, new Date());
   sheet.insertRowAfter(1);
   sheet.getRange(2, 1, 1, row.length).setValues([row]);
+
+  // An inserted row inherits the format of the row above it, which is the
+  // header, so the timestamp renders date-only and loses the time. Set it
+  // explicitly. The default is unambiguous about day and month order, which
+  // a locale-formatted date is not.
+  sheet.getRange(2, 1).setNumberFormat(cfg.dateFormat);
 }
