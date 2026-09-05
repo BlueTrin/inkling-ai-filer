@@ -2,15 +2,14 @@
 
 [![test](https://github.com/BlueTrin/inkling-ai-filer/actions/workflows/test.yml/badge.svg)](https://github.com/BlueTrin/inkling-ai-filer/actions/workflows/test.yml)
 
-Scan a page on your phone. A few minutes later it is sitting in the right
-folder in Google Drive, under a name that tells you what it is.
+Scan a page on your phone. 
 
-That is the whole product. There is no app to open and no interface. A Google
-Apps Script watches one Drive folder; when something lands in it, the page goes
-to Claude once, comes back with a name and a destination, and gets filed. On
-days when you scan nothing, nothing happens and nothing is spent.
+A few minutes later it is sitting in the right folder in Google Drive.
 
-It is deliberately small — about 500 lines of one file — and it is built so
+That is the whole product. Leverage AI to file your paperwork instead of 
+spending your valuable time doing menial tasks.
+
+It is deliberately small — about 500 lines of one file — and it is built so 
 that the parts most likely to go wrong fail visibly rather than quietly.
 
 ## Why it's a Google Apps Script
