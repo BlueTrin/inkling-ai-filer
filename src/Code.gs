@@ -139,7 +139,7 @@ function route_(cfg, file, newName, destId, status, msg, verdict) {
  */
 function discoverFolders_(cfg) {
   const root = DriveApp.getFolderById(cfg.rootId);
-  const tree = { paths: [], ids: {}, samples: {}, skipped: [], capped: false };
+  const tree = { paths: [], ids: {}, samples: {}, notes: {}, skipped: [], capped: false };
   let queue = [{ folder: root, path: '', depth: 0 }];
 
   while (queue.length) {
@@ -161,6 +161,7 @@ function discoverFolders_(cfg) {
       tree.paths.push(path);
       tree.ids[path] = id;
       tree.samples[path] = sampleNames_(child, cfg.samplesPer);
+      tree.notes[path] = folderNote_(child);
 
       if (node.depth + 1 < cfg.maxDepth) {
         queue.push({ folder: child, path: path, depth: node.depth + 1 });
@@ -168,6 +169,16 @@ function discoverFolders_(cfg) {
     }
   }
   return tree;
+}
+
+/**
+ * A folder's Drive description, which is the only place a human can state what
+ * a folder is FOR. Without it the model infers scope from the name and whatever
+ * happens to be filed already, which is nothing at all for a new folder.
+ */
+function folderNote_(folder) {
+  const d = folder.getDescription();
+  return typeof d === 'string' ? d.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
 }
 
 function sampleNames_(folder, limit) {
@@ -217,7 +228,7 @@ function classify_(cfg, file, tree) {
         { type: 'document',
           source: { type: 'base64', media_type: 'application/pdf',
                     data: Utilities.base64Encode(file.getBlob().getBytes()) } },
-        { type: 'text', text: promptText_(tree.paths, tree.samples, cfg.folderCreation) }
+        { type: 'text', text: promptText_(tree.paths, tree.samples, cfg.folderCreation, tree.notes) }
       ]
     }]
   };
@@ -238,14 +249,18 @@ function classify_(cfg, file, tree) {
 }
 
 /** Pure. The prompt is a function so the test can assert the folder list is in it. */
-function promptText_(allowedFolders, samples, folderCreation) {
+function promptText_(allowedFolders, samples, folderCreation, notes) {
   const lines = allowedFolders.map(function (p) {
+    const note = (notes && notes[p]) || '';
     const eg = (samples && samples[p]) || [];
-    return eg.length ? '  ' + p + ' — e.g. ' + eg.join(', ') : '  ' + p;
+    let line = '  ' + p;
+    if (note) line += ' — ' + note;
+    if (eg.length) line += ' — e.g. ' + eg.join(', ');
+    return line;
   });
 
   let s = 'This is a scan of a single page, handwritten or printed.\n' +
-    'Existing folders, with examples of what is already filed in each:\n' +
+    'Existing folders, what each is for, and examples of what is filed in each:\n' +
     lines.join('\n') + '\n' +
     'Reply with JSON only, no prose, no code fences:\n' +
     '{"name":"YYYY-MM-DD short topic",' +

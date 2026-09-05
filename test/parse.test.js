@@ -379,3 +379,29 @@ test('an invented folder is recovered as a suggestion', async (t) => {
     assert.strictEqual(v({ folder: '_Unsorted', confidence: 0.9 }).suggested, '');
   });
 });
+
+test('promptText_ folder descriptions', async (t) => {
+  const NOTES = { 'Receipts': 'Council tax, TV licence and DVLA correspondence' };
+  const SAMPLES = { 'Receipts': ['2026-01 statement.pdf'] };
+
+  await t.test('a description states what the folder is for', () => {
+    const p = gs.promptText_(FOLDERS, {}, 'propose', NOTES);
+    assert.ok(p.includes('Receipts — Council tax, TV licence and DVLA correspondence'));
+  });
+
+  await t.test('description and examples appear together', () => {
+    const p = gs.promptText_(FOLDERS, SAMPLES, 'propose', NOTES);
+    assert.ok(p.includes('Receipts — Council tax, TV licence and DVLA correspondence'
+                         + ' — e.g. 2026-01 statement.pdf'));
+  });
+
+  await t.test('folders without a description are unchanged', () => {
+    const p = gs.promptText_(FOLDERS, {}, 'propose', NOTES);
+    assert.ok(p.includes('\n  Personal\n') || p.includes('\n  Personal'));
+  });
+
+  await t.test('omitting notes entirely still works', () => {
+    const p = gs.promptText_(FOLDERS, SAMPLES, 'propose');
+    assert.ok(p.includes('Receipts — e.g. 2026-01 statement.pdf'));
+  });
+});
