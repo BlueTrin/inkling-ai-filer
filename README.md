@@ -67,7 +67,7 @@ hands you for nothing.
                                        └──────────────────────────────┘
                                    │
                                    ▼
-                        Notes/Invoices/        ◄── discovered, not configured
+                        Notes/Invoices/       ◄── discovered, not configured
                         Notes/Contracts/
                         Notes/_Unsorted/      ◄── low confidence, ambiguous,
                                                   oversized, or 3x failed
@@ -172,9 +172,10 @@ already inside it — so a folder called `Misc` is still legible by its contents
 
 ### Telling the model what a folder is for
 
-A folder name is often too small to carry its meaning. `Admin` might be bank
-statements, or invoices you have issued, or both, and a folder you made five
-minutes ago has no contents to infer it from.
+A folder name is often too small to carry its meaning. `Admin` might be
+correspondence from government bodies, or household bills, or simply whatever
+you file when tidying up — and a folder you made five minutes ago has no
+contents to infer it from.
 
 Put a `README.md` inside any folder and its text is shown to the model beside
 the folder name:
@@ -182,14 +183,15 @@ the folder name:
 ```markdown
 # Admin
 
-Council tax, TV licence and DVLA correspondence.
-Anything from a bank, broker or DVLA provider.
+Council tax, TV licence, DVLA — anything from a government body.
+Not household bills; those have their own folder.
 ```
 
 Optional, per folder, and markdown structure is flattened away so only the
 words reach the model. This is a better home for scope than the folder name is:
 you can change what a folder means without renaming it and re-filing everything
-already inside.
+already inside — `Admin-and-Bills` would have to be renamed to change scope; a
+note can just be edited.
 
 ### It will not invent folders
 
