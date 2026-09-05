@@ -35,6 +35,17 @@ is about 200 lines and is the whole implementation.
   `auto` mode yet; suggestions are recorded and read by a human. The failure
   this avoids is taxonomy sprawl, which is invisible and compounds — see the
   design note before implementing `auto`.
+- **An invented folder name is kept, not discarded.** When the model names a
+  folder that does not exist it is telling you which folder should have
+  existed, so `validateVerdict_` recovers it as the suggestion. Routing is
+  unchanged — confidence still 0, still `_Unsorted`. Observed live: the model
+  answered `folder: "Admin/Suppliers"` and, believing it had chosen, left
+  `suggested_folder` empty; the answer we wanted was in the field being thrown
+  away.
+- **A folder's `README.md` is the only way a human can state its scope.**
+  Without it the model has the folder name and whatever is already filed, which
+  is nothing for a new folder. Absent, empty or unreadable all mean "no note",
+  never an error.
 - **An ambiguous verdict is never resolved by picking one.** If the model names
   two folders it could not choose between, the page goes to `_Unsorted` with an
   `AMBIGUOUS` row. Arbitrary tie-breaking is the misfile that is hardest to
@@ -61,7 +72,13 @@ npm test        # node --test, no dependencies
 ```
 
 The tests cover the pure path only: fence stripping, verdict validation,
-suggestion sanitising, duplicate detection, filename safety. That is deliberate — it is the code most likely to fail
+suggestion sanitising, duplicate detection, note flattening, index row
+construction, filename safety.
+
+There is a second, unofficial way to run them: `Code.gs` has no top-level
+statements, so macOS can evaluate it directly —
+`osascript -l JavaScript` against a harness that mirrors the assertions. Useful
+where Node is unavailable. It is not a substitute for `npm test`. That is deliberate — it is the code most likely to fail
 silently, and the only part testable outside Apps Script. Anything touching
 `DriveApp`, `SpreadsheetApp` or `UrlFetchApp` is verified by the manual setup
 steps in the README instead.

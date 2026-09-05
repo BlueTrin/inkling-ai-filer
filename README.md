@@ -7,8 +7,8 @@ folder, and the file is renamed and moved.
 
 - **$0 and zero tokens on an idle day.** The poller is a folder listing, not a
   model call.
-- **~$0.005 a page** when there is something to file, capped by a daily call
-  limit.
+- **~$0.005 a page** when there is something to file — nearer 1p for a
+  multi-page document — capped by a daily call limit.
 - **Nothing is ever deleted**, and anything the model is not confident about
   goes to `_Unsorted` rather than to a guessed folder.
 - **The folder tree is read, not configured.** Rename, move or delete folders
@@ -100,14 +100,17 @@ than guessing on day one.
 
 ### 2. Create the index Sheet
 
-A Google Sheet named `index`, with the header row:
+A blank Google Sheet named `index`. That is the whole step — the script writes
+its own header row the first time it logs anything:
 
 ```
 when | status | message | folder | confidence | summary | suggested | in_tok | out_tok | usd
 ```
 
-Every action appends one row. The token columns are what make the running cost
-auditable — sum the `usd` column monthly rather than trusting any estimate.
+Every action inserts one row **directly beneath the header**, so the most recent
+thing that happened is the first thing you see. The token columns are what make
+the running cost auditable — sum the `usd` column monthly rather than trusting
+any estimate.
 
 ### 3. Install the script
 
@@ -133,6 +136,9 @@ runs. Project Settings -> Script Properties.
 | `MAX_DEPTH` | no | `3` | Levels below the root that discovery descends |
 | `MAX_FOLDERS` | no | `100` | Destination cap. Hitting it is logged, not silent |
 | `SAMPLES_PER_FOLDER` | no | `3` | Example filenames shown per folder |
+| `NOTE_FILE` | no | `README.md` | Filename read for a folder's description of itself |
+| `NOTE_CHARS` | no | `300` | How much of that note reaches the prompt |
+| `DATE_FORMAT` | no | `yyyy-mm-dd hh:mm:ss` | Timestamp format in the index |
 | `PRICE_IN_PER_MTOK` / `PRICE_OUT_PER_MTOK` | no | `1.0` / `5.0` | Only affects the index's cost column |
 | `MAX_MB`, `SETTLE_SECONDS`, `MAX_ATTEMPTS` | no | `20`, `60`, `3` | |
 
@@ -203,6 +209,35 @@ The model is shown a couple of example filenames from each folder alongside its
 name, so a folder called `Misc` is still legible by its contents. That also
 means the tree teaches the model what your folders mean without you having to
 name them carefully.
+
+### Telling the model what a folder is for
+
+A folder name is often too small to carry its meaning. `Admin` might mean
+council tax, or invoices you have issued, or both — and a folder you
+created five minutes ago has no contents to infer it from.
+
+Put a **`README.md`** inside any folder and its text is shown to the model
+beside the folder name:
+
+```markdown
+# Admin
+
+Council tax, TV licence and DVLA correspondence.
+Anything from a bank, broker or DVLA provider.
+```
+
+Markdown structure is flattened to a single line, so headings and bullets are
+fine — only the words reach the prompt. Entirely optional, per folder: without
+one, the folder falls back to its name plus a few example filenames.
+
+The note file never appears in those examples, and a missing, empty or
+unreadable one is treated as no note rather than an error — a broken README
+must never stop a page being filed.
+
+This is also the better place for scope than the folder name. `Admin` with a
+note explaining it covers bills beats a folder called
+`Admin-and-Bills`, because you can change what a folder means without
+renaming it and re-filing what is already inside.
 
 **No folder is ever created automatically.** When a page fits nowhere, the model
 records the folder it thinks should exist in the `suggested` column and the page
@@ -287,10 +322,22 @@ Other failure modes and what covers them:
                 200 output tokens                     x $5/MTok  = $0.0010
                                                                    ───────
                                                                    $0.0050
-
-  150 pages/month  ->  $0.75        idle month  ->  $0.00
-  daily cap 100 calls  ->  worst case ~$0.50/day
 ```
+
+**Budget per document, not per page.** That figure is per page and holds up in
+practice, but real paperwork is rarely one page. Measured on live runs: a
+one-page letter came to ~4,200 input tokens ($0.005), while a
+multi-page bill came to ~9,500 ($0.010). Input tokens dominate
+entirely — output is a hundred-odd tokens either way.
+
+```
+  150 documents/month  ->  ~$1.50      idle month  ->  $0.00
+  daily cap 100 calls  ->  worst case ~$1/day
+```
+
+The folder list, the folder notes and the example filenames are all sent on
+every call, so a large taxonomy raises the per-page cost — a few hundred extra
+tokens for a handful of folders, more like 2,000 at the 100-folder cap.
 
 Hosting is $0: the Apps Script free quota is roughly 90 minutes of runtime and
 20,000 `UrlFetchApp` calls a day, and an idle check uses about a second and no
