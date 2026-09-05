@@ -1,0 +1,26 @@
+# Runs the test suite on every push and pull request.
+#
+# The suite has no dependencies — node --test is built in — so there is nothing
+# to install and no lockfile to keep current. Node 20 is the oldest release with
+# a stable node:test runner; the matrix also runs the current LTS so a future
+# behaviour change surfaces here rather than in someone's clone.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test

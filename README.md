@@ -1,5 +1,7 @@
 # inkling-ai-filer
 
+[![test](https://github.com/BlueTrin/inkling-ai-filer/actions/workflows/test.yml/badge.svg)](https://github.com/BlueTrin/inkling-ai-filer/actions/workflows/test.yml)
+
 Scan a page on your phone. A few minutes later it is sitting in the right
 folder in Google Drive, under a name that tells you what it is.
 
@@ -391,6 +393,10 @@ been rejected; two folder names that mean the same thing.
 
 Anything touching Drive, Sheets or the API is not covered, and is what the dry
 run in step 5 is for.
+
+There are no dependencies — `node --test` is built in — so there is nothing to
+install and no lockfile to keep current. GitHub Actions runs the same command
+on Node 20 and 22 for every push, which is what the badge at the top reports.
 
 ## Version control for the deployed script
 
