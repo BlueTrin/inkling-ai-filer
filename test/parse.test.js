@@ -19,6 +19,21 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'Code.gs'), 'utf8'
 const gs = vm.createContext({});
 vm.runInContext(src, gs);
 
+/**
+ * Compare an array that came back from Code.gs against a plain one.
+ *
+ * vm.runInContext evaluates the source in its own realm, so arrays it returns
+ * carry that realm's Array.prototype. assert.deepStrictEqual compares
+ * prototypes, and rejects them against arrays built here even when every
+ * element matches — the failure reads "same structure but not reference-equal".
+ * Array.from rebuilds the value using this realm's constructor; the recursion
+ * covers arrays of arrays, which findDuplicateGroups_ returns.
+ */
+function deepEq(actual, expected, message) {
+  const host = (v) => (Array.isArray(v) ? Array.from(v, host) : v);
+  assert.deepStrictEqual(host(actual), expected, message);
+}
+
 const FOLDERS = ['Work/Projects', 'Work/Other', 'Receipts', 'Personal'];
 
 test('stripFences_', async (t) => {
@@ -183,26 +198,26 @@ test('validateAmbiguous_ (via validateVerdict_)', async (t) => {
   await t.test('two real folders the model could not choose between', () => {
     const r = v({ folder: '', confidence: 0.3,
                   ambiguous: ['Work/Projects', 'Work/Other'] });
-    assert.deepStrictEqual(r.ambiguous, ['Work/Projects', 'Work/Other']);
+    deepEq(r.ambiguous, ['Work/Projects', 'Work/Other']);
   });
 
   await t.test('a single candidate is not an ambiguity', () => {
-    assert.deepStrictEqual(v({ ambiguous: ['Work/Projects'] }).ambiguous, []);
+    deepEq(v({ ambiguous: ['Work/Projects'] }).ambiguous, []);
   });
 
   await t.test('invented folders are dropped, and dropping can dissolve the ambiguity', () => {
     const r = v({ ambiguous: ['Work/Projects', 'Work/Invented'] });
-    assert.deepStrictEqual(r.ambiguous, [], 'only one real candidate left');
+    deepEq(r.ambiguous, [], 'only one real candidate left');
   });
 
   await t.test('duplicates in the list do not manufacture an ambiguity', () => {
-    assert.deepStrictEqual(v({ ambiguous: ['Personal', 'Personal'] }).ambiguous, []);
+    deepEq(v({ ambiguous: ['Personal', 'Personal'] }).ambiguous, []);
   });
 
   await t.test('non-arrays and junk entries do not throw', () => {
-    assert.deepStrictEqual(v({ ambiguous: 'Work/Projects' }).ambiguous, []);
-    assert.deepStrictEqual(v({ ambiguous: null }).ambiguous, []);
-    assert.deepStrictEqual(v({ ambiguous: [1, {}, null] }).ambiguous, []);
+    deepEq(v({ ambiguous: 'Work/Projects' }).ambiguous, []);
+    deepEq(v({ ambiguous: null }).ambiguous, []);
+    deepEq(v({ ambiguous: [1, {}, null] }).ambiguous, []);
   });
 
   await t.test('an ambiguous reply can still carry a usable name', () => {
@@ -275,19 +290,19 @@ test('findDuplicateGroups_', async (t) => {
   const f = gs.findDuplicateGroups_;
 
   await t.test('a clean tree reports nothing', () => {
-    assert.deepStrictEqual(f(['Work/Projects', 'Personal', 'Receipts']), []);
+    deepEq(f(['Work/Projects', 'Personal', 'Receipts']), []);
   });
 
   await t.test('near-duplicate leaf names are grouped', () => {
     const g = f(['Admin/Insurance', 'Admin/Insurances']);
     assert.strictEqual(g.length, 1);
-    assert.deepStrictEqual(g[0], ['Admin/Insurance', 'Admin/Insurances']);
+    deepEq(g[0], ['Admin/Insurance', 'Admin/Insurances']);
   });
 
   await t.test('the same name under different parents is reported too', () => {
     // Possibly deliberate, so this is a report for a human, never a routing change.
     const g = f(['Work/Admin', 'Personal/Admin']);
-    assert.deepStrictEqual(g[0], ['Work/Admin', 'Personal/Admin']);
+    deepEq(g[0], ['Work/Admin', 'Personal/Admin']);
   });
 
   await t.test('three-way duplicates come back as one group', () => {
@@ -297,7 +312,7 @@ test('findDuplicateGroups_', async (t) => {
   });
 
   await t.test('an empty tree does not throw', () => {
-    assert.deepStrictEqual(f([]), []);
+    deepEq(f([]), []);
   });
 });
 
