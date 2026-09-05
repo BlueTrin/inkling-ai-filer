@@ -313,3 +313,39 @@ test('hash_ changes when a report changes, and only then', () => {
   assert.notStrictEqual(gs.hash_('a\nb'), gs.hash_('a\nc'));
   assert.strictEqual(typeof gs.hash_(null), 'number');
 });
+
+test('verdictNotes_', async (t) => {
+  const v = (o) => gs.validateVerdict_(o, FOLDERS, 3);
+
+  await t.test('a filed verdict gets no note', () => {
+    assert.strictEqual(gs.verdictNotes_(v({ folder: 'Personal', confidence: 0.9 })), '');
+  });
+
+  await t.test('distinguishes an invented folder from no folder at all', () => {
+    const invented = gs.verdictNotes_(v({ folder: 'Made/Up', confidence: 0.9 }));
+    const declined = gs.verdictNotes_(v({ folder: '' }));
+    assert.ok(invented.includes('"Made/Up" is not in the tree'));
+    assert.ok(declined.includes('model chose no folder'));
+    assert.notStrictEqual(invented, declined);
+  });
+
+  await t.test('reports a suggestion that survived validation', () => {
+    const n = gs.verdictNotes_(v({ folder: '', suggested_folder: 'Admin/Insurance' }));
+    assert.ok(n.includes('suggested "Admin/Insurance"'));
+  });
+
+  await t.test('reports a suggestion that was rejected, and shows the raw value', () => {
+    // Too deep for MAX_DEPTH 3 — sanitised away, but the index must still say so.
+    const n = gs.verdictNotes_(v({ folder: '', suggested_folder: 'a/b/c/d' }));
+    assert.ok(n.includes('"a/b/c/d" was rejected'), n);
+  });
+
+  await t.test('reports the absence of a suggestion', () => {
+    assert.ok(gs.verdictNotes_(v({ folder: '' })).includes('no suggestion returned'));
+  });
+
+  await t.test('is safe for rows logged without a verdict', () => {
+    assert.strictEqual(gs.verdictNotes_(undefined), '');
+    assert.strictEqual(gs.verdictNotes_(null), '');
+  });
+});

@@ -301,11 +301,18 @@ function stripFences_(text) {
  * _Unsorted with the suggested name still applied.
  */
 function validateVerdict_(parsed, allowedFolders, maxDepth) {
-  const v = { name: '', folder: '', confidence: 0, summary: '', suggested: '', ambiguous: [] };
+  const v = { name: '', folder: '', confidence: 0, summary: '', suggested: '', ambiguous: [],
+              rawFolder: '', rawSuggested: '' };
   if (!parsed || typeof parsed !== 'object') return v;
 
   if (typeof parsed.name === 'string') v.name = parsed.name;
   if (typeof parsed.summary === 'string') v.summary = parsed.summary;
+
+  // Kept verbatim so the index can say why a verdict was discarded. Without
+  // these, an empty folder column cannot be told apart from an invented one.
+  if (typeof parsed.folder === 'string') v.rawFolder = parsed.folder;
+  if (typeof parsed.suggested_folder === 'string') v.rawSuggested = parsed.suggested_folder;
+
   v.suggested = sanitiseSuggestion_(parsed.suggested_folder, maxDepth);
   v.ambiguous = validateAmbiguous_(parsed.ambiguous, allowedFolders);
 
@@ -402,6 +409,26 @@ function findDuplicateGroups_(paths) {
   return out;
 }
 
+/**
+ * Why a verdict did not result in a filing, in words. Only produced when the
+ * model named no usable folder, so a FILED row stays clean. This is the
+ * difference between "the model declined" and "the model invented a folder",
+ * which the folder and suggested columns alone cannot express.
+ */
+function verdictNotes_(v) {
+  if (!v || v.folder) return '';
+  const notes = [];
+
+  if (v.rawFolder) notes.push('folder "' + v.rawFolder + '" is not in the tree');
+  else notes.push('model chose no folder');
+
+  if (v.suggested) notes.push('suggested "' + v.suggested + '"');
+  else if (v.rawSuggested) notes.push('suggestion "' + v.rawSuggested + '" was rejected');
+  else notes.push('no suggestion returned');
+
+  return ' [' + notes.join('; ') + ']';
+}
+
 /** djb2. Only used to notice that a report has changed since last time. */
 function hash_(s) {
   let h = 5381;
@@ -438,6 +465,7 @@ function incCallsToday_() {
 
 function log_(cfg, status, msg, v) {
   const u = (v && v._usage) || {};
+  msg = msg + verdictNotes_(v);
   const cost = (u.input_tokens || 0) * cfg.priceIn + (u.output_tokens || 0) * cfg.priceOut;
   SpreadsheetApp.openById(cfg.indexSheetId).getSheets()[0].appendRow([
     new Date(), status, msg,
