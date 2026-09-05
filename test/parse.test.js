@@ -405,3 +405,37 @@ test('promptText_ folder descriptions', async (t) => {
     assert.ok(p.includes('Receipts — e.g. 2026-01 statement.pdf'));
   });
 });
+
+test('cleanNote_', async (t) => {
+  const f = gs.cleanNote_;
+
+  await t.test('flattens a markdown note to one line', () => {
+    const md = '# Admin\n\nCouncil tax and TV licence correspondence.\n';
+    assert.strictEqual(f(md, 300), 'Admin Council tax and TV licence correspondence.');
+  });
+
+  await t.test('strips bullet markers but keeps the words', () => {
+    const md = 'Goes here:\n- council tax\n* TV licence\n+ DVLA';
+    assert.strictEqual(f(md, 300), 'Goes here: council tax TV licence DVLA');
+  });
+
+  await t.test('truncates to the character cap', () => {
+    assert.strictEqual(f('x'.repeat(500), 100).length, 100);
+  });
+
+  await t.test('falls back to a sane cap for a bad limit', () => {
+    assert.strictEqual(f('x'.repeat(500), 0).length, 300);
+    assert.strictEqual(f('x'.repeat(500), -5).length, 300);
+  });
+
+  await t.test('an empty or missing note is an empty string, not an error', () => {
+    assert.strictEqual(f('', 300), '');
+    assert.strictEqual(f('   \n\n  ', 300), '');
+    assert.strictEqual(f(null, 300), '');
+    assert.strictEqual(f(undefined, 300), '');
+  });
+
+  await t.test('strips a leading byte order mark', () => {
+    assert.strictEqual(f('\uFEFF# Title\ntext', 300), 'Title text');
+  });
+});

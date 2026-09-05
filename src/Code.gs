@@ -48,6 +48,8 @@ function cfg_() {
     maxDepth:      num('MAX_DEPTH', 3),
     maxFolders:    num('MAX_FOLDERS', 100),
     samplesPer:    num('SAMPLES_PER_FOLDER', 3),
+    noteFile:      props.getProperty('NOTE_FILE') || 'README.md',
+    noteChars:     num('NOTE_CHARS', 300),
 
     // "propose" records a suggested folder without creating it. "off" drops the
     // suggestion entirely. "auto" is not implemented; see the design note.
@@ -160,8 +162,8 @@ function discoverFolders_(cfg) {
       const path = node.path ? node.path + '/' + name : name;
       tree.paths.push(path);
       tree.ids[path] = id;
-      tree.samples[path] = sampleNames_(child, cfg.samplesPer);
-      tree.notes[path] = folderNote_(child);
+      tree.samples[path] = sampleNames_(child, cfg.samplesPer, cfg.noteFile);
+      tree.notes[path] = folderNote_(child, cfg);
 
       if (node.depth + 1 < cfg.maxDepth) {
         queue.push({ folder: child, path: path, depth: node.depth + 1 });
@@ -172,19 +174,31 @@ function discoverFolders_(cfg) {
 }
 
 /**
- * A folder's Drive description, which is the only place a human can state what
- * a folder is FOR. Without it the model infers scope from the name and whatever
- * happens to be filed already, which is nothing at all for a new folder.
+ * An optional README.md inside a folder, stating what the folder is FOR. This
+ * is the only place a human can say so: without it the model infers scope from
+ * the folder name and whatever is already filed, which is nothing at all for a
+ * folder you just created. Absent, unreadable or empty all mean "no note",
+ * never an error — a broken note must not stop a page being filed.
  */
-function folderNote_(folder) {
-  const d = folder.getDescription();
-  return typeof d === 'string' ? d.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+function folderNote_(folder, cfg) {
+  try {
+    const it = folder.getFilesByName(cfg.noteFile);
+    if (!it.hasNext()) return '';
+    return cleanNote_(it.next().getBlob().getDataAsString(), cfg.noteChars);
+  } catch (e) {
+    return '';
+  }
 }
 
-function sampleNames_(folder, limit) {
+/** The note file is documentation, not filed content, so it is never offered
+ *  as an example of what lives in the folder. */
+function sampleNames_(folder, limit, noteFile) {
   const out = [];
   const it = folder.getFiles();
-  while (it.hasNext() && out.length < limit) out.push(it.next().getName());
+  while (it.hasNext() && out.length < limit) {
+    const name = it.next().getName();
+    if (name !== noteFile) out.push(name);
+  }
   return out;
 }
 
@@ -395,6 +409,20 @@ function safeName_(s) {
     .slice(0, 120)
     .replace(/[. ]+$/, '');
   return cleaned || 'untitled';
+}
+
+/** Markdown flattened to one line for the prompt. Headings and bullet markers
+ *  are structure for a human reader and noise for the model, so they go; the
+ *  words stay. Never throws, and always returns a string. */
+function cleanNote_(text, maxChars) {
+  const limit = maxChars > 0 ? maxChars : 300;
+  return String(text === null || text === undefined ? '' : text)
+    .replace(/^\uFEFF/, '')
+    .replace(/^\s*#+\s*/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, limit);
 }
 
 /** A folder name containing the path separator would re-parse as two levels,
