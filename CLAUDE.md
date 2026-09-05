@@ -35,6 +35,11 @@ is about 200 lines and is the whole implementation.
   `auto` mode yet; suggestions are recorded and read by a human. The failure
   this avoids is taxonomy sprawl, which is invisible and compounds — see the
   design note before implementing `auto`.
+- **A scheduled run must never be a dry run.** Dry runs do not empty `Inbox`,
+  and location is the queue, so a trigger would re-bill the same files every
+  cycle with no visible symptom. `watchInbox(e)` throws when `isScheduledRun_(e)`
+  and `DRY_RUN` are both true. The event-object argument is the only signal Apps
+  Script gives for how a run started — do not remove the parameter.
 - **An invented folder name is kept, not discarded.** When the model names a
   folder that does not exist it is telling you which folder should have
   existed, so `validateVerdict_` recovers it as the suggestion. Routing is

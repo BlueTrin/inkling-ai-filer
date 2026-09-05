@@ -63,11 +63,24 @@ function cfg_() {
 
 /*** ENTRY POINT — bind a 15-minute time-driven trigger to this ***********/
 
-function watchInbox() {
+function watchInbox(e) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(0)) return;                 // a previous run is still going
   try {
     const cfg = cfg_();
+
+    // A dry run does not move files, and location is the queue — so on a
+    // trigger the same files would be re-classified and re-billed every cycle,
+    // silently, until the daily cap. Refuse before spending anything. The
+    // error surfaces in the trigger's execution log and in Apps Script's
+    // failure notification; a manual dry run is still allowed.
+    if (isScheduledRun_(e) && cfg.dryRun) {
+      throw new Error('DRY_RUN is on and this run was scheduled. A dry run ' +
+        'never empties Inbox, so every cycle would re-classify and re-charge ' +
+        'for the same files. Set DRY_RUN to the string "false", or delete the ' +
+        'trigger and run dry runs by hand.');
+    }
+
     const inbox = DriveApp.getFolderById(cfg.inboxId);
 
     // R2: the idle path lists one folder and exits. No tree walk, no API call.
@@ -424,6 +437,13 @@ function cleanNote_(text, maxChars) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, limit);
+}
+
+/** A time-driven trigger passes an event object; running the function by hand
+ *  from the editor passes nothing. That difference is the only signal Apps
+ *  Script gives for how a run was started. */
+function isScheduledRun_(e) {
+  return Boolean(e) && typeof e === 'object';
 }
 
 /** A folder name containing the path separator would re-parse as two levels,

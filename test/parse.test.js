@@ -482,3 +482,26 @@ test('indexRow_ / indexHeader_', async (t) => {
     assert.strictEqual(row[2], 'a.pdf');
   });
 });
+
+test('isScheduledRun_', async (t) => {
+  const f = gs.isScheduledRun_;
+
+  await t.test('a manual run from the editor passes nothing', () => {
+    assert.strictEqual(f(undefined), false);
+    assert.strictEqual(f(), false);
+  });
+
+  await t.test('a time-driven trigger passes an event object', () => {
+    assert.strictEqual(f({ triggerUid: '123', 'day-of-month': 5 }), true);
+    assert.strictEqual(f({}), true, 'an empty event object is still a trigger');
+  });
+
+  await t.test('junk is treated as manual rather than scheduled', () => {
+    // Erring towards "manual" only ever allows a dry run the user asked for;
+    // erring the other way would block a legitimate manual run.
+    assert.strictEqual(f(null), false);
+    assert.strictEqual(f(0), false);
+    assert.strictEqual(f(''), false);
+    assert.strictEqual(f('trigger'), false);
+  });
+});

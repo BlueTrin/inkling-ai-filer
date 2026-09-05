@@ -145,6 +145,14 @@ runs. Project Settings -> Script Properties.
 `DRY_RUN` defaults to true and only the exact string `false` disables it, so a
 missing or misspelled property cannot silently start moving files.
 
+**A scheduled run refuses to run dry.** A dry run never empties `Inbox`, so on
+a 15-minute trigger the same files would be re-classified and re-billed every
+cycle until the daily cap — silently, since nothing is obviously wrong. If the
+trigger fires while `DRY_RUN` is on, the run throws before spending anything;
+Apps Script surfaces that in the execution log and its failure notification.
+Manual dry runs are unaffected, which is the only way you should be doing
+them.
+
 ### 5. Dry run
 
 Put three test pages in `Inbox/` — one clearly matching a folder, one clearly
