@@ -316,7 +316,17 @@ function validateVerdict_(parsed, allowedFolders, maxDepth) {
   v.suggested = sanitiseSuggestion_(parsed.suggested_folder, maxDepth);
   v.ambiguous = validateAmbiguous_(parsed.ambiguous, allowedFolders);
 
-  if (allowedFolders.indexOf(parsed.folder) === -1) return v;
+  if (allowedFolders.indexOf(parsed.folder) === -1) {
+    // An invented folder is not noise. The model believed it had chosen a
+    // folder, so it never took the "nothing fits" branch and left
+    // suggested_folder empty — but naming a folder that does not exist is
+    // itself the suggestion. Recover it rather than discarding it. Routing is
+    // unchanged: confidence stays 0 and the file still goes to _Unsorted.
+    if (!v.suggested && v.rawFolder) {
+      v.suggested = sanitiseSuggestion_(v.rawFolder, maxDepth);
+    }
+    return v;
+  }
   if (typeof parsed.confidence !== 'number' || !isFinite(parsed.confidence)) return v;
   if (parsed.confidence < 0 || parsed.confidence > 1) return v;
 

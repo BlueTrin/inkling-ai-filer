@@ -349,3 +349,33 @@ test('verdictNotes_', async (t) => {
     assert.strictEqual(gs.verdictNotes_(null), '');
   });
 });
+
+test('an invented folder is recovered as a suggestion', async (t) => {
+  const v = (o) => gs.validateVerdict_(o, FOLDERS, 3);
+
+  await t.test('the invented name becomes the suggestion', () => {
+    // Observed live: the model put "Admin/Suppliers" in `folder`, believed it
+    // had chosen one, and so never filled suggested_folder.
+    const r = v({ name: 'a bill', folder: 'Admin/Suppliers', confidence: 0.9 });
+    assert.strictEqual(r.suggested, 'Admin/Suppliers');
+    assert.strictEqual(r.folder, '', 'still not filed');
+    assert.strictEqual(r.confidence, 0, 'still not trusted');
+  });
+
+  await t.test('an explicit suggested_folder wins over the invented one', () => {
+    const r = v({ folder: 'Admin/Suppliers', suggested_folder: 'Admin/Energy' });
+    assert.strictEqual(r.suggested, 'Admin/Energy');
+  });
+
+  await t.test('a real folder produces no suggestion', () => {
+    assert.strictEqual(v({ folder: 'Personal', confidence: 0.8 }).suggested, '');
+  });
+
+  await t.test('an invented folder too deep to be usable is still rejected', () => {
+    assert.strictEqual(v({ folder: 'a/b/c/d', confidence: 0.9 }).suggested, '');
+  });
+
+  await t.test('an invented machinery name is not proposed', () => {
+    assert.strictEqual(v({ folder: '_Unsorted', confidence: 0.9 }).suggested, '');
+  });
+});
