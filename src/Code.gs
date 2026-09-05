@@ -4,6 +4,10 @@
  * Watches a Google Drive folder, classifies each scanned page with Claude,
  * then renames the file and moves it into a topic folder.
  *
+ * The set of destination folders is discovered from the Drive tree on each run
+ * that has work to do, not configured, so renaming or deleting a folder is
+ * absorbed without touching anything here.
+ *
  * All configuration lives in Script Properties, so this file holds no
  * account-specific values and is safe to commit. The README lists them under
  * "Script Properties".
@@ -30,7 +34,7 @@ function cfg_() {
     inboxId:       need('INBOX_ID'),
     unsortedId:    need('UNSORTED_ID'),
     indexSheetId:  need('INDEX_SHEET_ID'),
-    targets:       JSON.parse(need('TARGETS')),   // {"Work/Projects":"1AbC...", ...}
+    rootId:        need('ROOT_ID'),        // discovery walks beneath this
     apiKey:        need('ANTHROPIC_KEY'),
 
     model:         props.getProperty('MODEL') || 'claude-haiku-4-5',
@@ -41,6 +45,13 @@ function cfg_() {
     maxBytes:      num('MAX_MB', 20) * 1024 * 1024,
     settleMs:      num('SETTLE_SECONDS', 60) * 1000,
     maxAttempts:   num('MAX_ATTEMPTS', 3),
+    maxDepth:      num('MAX_DEPTH', 3),
+    maxFolders:    num('MAX_FOLDERS', 100),
+    samplesPer:    num('SAMPLES_PER_FOLDER', 3),
+
+    // "propose" records a suggested folder without creating it. "off" drops the
+    // suggestion entirely. "auto" is not implemented; see the design note.
+    folderCreation: props.getProperty('FOLDER_CREATION') || 'propose',
 
     // Safe default: anything other than the exact string "false" stays dry.
     dryRun:        props.getProperty('DRY_RUN') !== 'false'
@@ -55,37 +66,49 @@ function watchInbox() {
   try {
     const cfg = cfg_();
     const inbox = DriveApp.getFolderById(cfg.inboxId);
+
+    // R2: the idle path lists one folder and exits. No tree walk, no API call.
+    const pending = [];
     const it = inbox.getFiles();
     const now = Date.now();
-
     while (it.hasNext()) {
-      if (callsToday_() >= cfg.dailyCallCap) { log_(cfg, 'CAP', 'daily cap reached'); return; }
       const file = it.next();
-      if (now - file.getLastUpdated().getTime() < cfg.settleMs) continue;   // still uploading
-      processOne_(cfg, file);
+      if (now - file.getLastUpdated().getTime() < cfg.settleMs) continue;  // still uploading
+      pending.push(file);
+    }
+    if (!pending.length) return;
+
+    // One snapshot of the tree per run, shared by every file in the batch.
+    const tree = discoverFolders_(cfg);
+    reportTreeProblems_(cfg, tree);
+
+    for (let i = 0; i < pending.length; i++) {
+      if (callsToday_() >= cfg.dailyCallCap) { log_(cfg, 'CAP', 'daily cap reached'); return; }
+      processOne_(cfg, pending[i], tree);
     }
   } finally {
     lock.releaseLock();
   }
 }
 
-function processOne_(cfg, file) {
+function processOne_(cfg, file, tree) {
   try {
     if (file.getSize() > cfg.maxBytes) return park_(cfg, file, 'oversized');
 
-    const verdict = classify_(cfg, file);
-    const folderId = cfg.targets[verdict.folder];
-    const ok = Boolean(folderId) && verdict.confidence >= cfg.minConfidence;
-
+    const verdict = classify_(cfg, file, tree);
     const newName = safeName_(verdict.name) + '.pdf';
-    if (cfg.dryRun) {
-      log_(cfg, 'DRY', file.getName() + ' -> ' + (verdict.folder || '_Unsorted') + '/' + newName, verdict);
-      return;
+
+    // The model looked at the tree and could not choose. Reaching for one of
+    // the candidates anyway is the misfile this whole design tries to avoid.
+    if (verdict.ambiguous.length >= 2) {
+      return route_(cfg, file, newName, cfg.unsortedId, 'AMBIGUOUS',
+                    newName + ' — fits ' + verdict.ambiguous.join(' and '), verdict);
     }
 
-    file.setName(newName);
-    file.moveTo(DriveApp.getFolderById(ok ? folderId : cfg.unsortedId));
-    log_(cfg, ok ? 'FILED' : 'UNSORTED', newName, verdict);
+    const folderId = tree.ids[verdict.folder];
+    const ok = Boolean(folderId) && verdict.confidence >= cfg.minConfidence;
+    return route_(cfg, file, newName, ok ? folderId : cfg.unsortedId,
+                  ok ? 'FILED' : 'UNSORTED', newName, verdict);
 
   } catch (e) {
     // Reached only for transient faults: HTTP failures, malformed JSON, Drive
@@ -97,20 +120,104 @@ function processOne_(cfg, file) {
   }
 }
 
+/** The single place a file is renamed and moved, so dry run has one gate. */
+function route_(cfg, file, newName, destId, status, msg, verdict) {
+  if (cfg.dryRun) return log_(cfg, 'DRY', status + ': ' + msg, verdict);
+  file.setName(newName);
+  file.moveTo(DriveApp.getFolderById(destId));
+  log_(cfg, status, msg, verdict);
+}
+
+/*** FOLDER DISCOVERY *****************************************************/
+
+/**
+ * Breadth-first walk beneath the configured root. Returns the allowed labels
+ * as root-relative paths, a path -> id map, a few example filenames per folder,
+ * and whatever had to be skipped so it can be reported rather than swallowed.
+ *
+ * Inbox and _Unsorted are machinery, not taxonomy, and are never candidates.
+ */
+function discoverFolders_(cfg) {
+  const root = DriveApp.getFolderById(cfg.rootId);
+  const tree = { paths: [], ids: {}, samples: {}, skipped: [], capped: false };
+  let queue = [{ folder: root, path: '', depth: 0 }];
+
+  while (queue.length) {
+    const node = queue.shift();
+    const it = node.folder.getFolders();
+
+    while (it.hasNext()) {
+      const child = it.next();
+      if (child.isTrashed()) continue;                        // P8, checked rather than assumed
+      const id = child.getId();
+      if (id === cfg.inboxId || id === cfg.unsortedId) continue;
+
+      const name = child.getName();
+      if (!isUsableSegment_(name)) { tree.skipped.push(name); continue; }
+
+      if (tree.paths.length >= cfg.maxFolders) { tree.capped = true; queue = []; break; }
+
+      const path = node.path ? node.path + '/' + name : name;
+      tree.paths.push(path);
+      tree.ids[path] = id;
+      tree.samples[path] = sampleNames_(child, cfg.samplesPer);
+
+      if (node.depth + 1 < cfg.maxDepth) {
+        queue.push({ folder: child, path: path, depth: node.depth + 1 });
+      }
+    }
+  }
+  return tree;
+}
+
+function sampleNames_(folder, limit) {
+  const out = [];
+  const it = folder.getFiles();
+  while (it.hasNext() && out.length < limit) out.push(it.next().getName());
+  return out;
+}
+
+/**
+ * Tree-level problems are properties of the folder structure, not of any one
+ * page, so they would otherwise be logged on every run forever. Report only
+ * when the set of problems changes.
+ */
+function reportTreeProblems_(cfg, tree) {
+  const dupes = findDuplicateGroups_(tree.paths);
+  const lines = [];
+
+  for (let i = 0; i < dupes.length; i++) {
+    lines.push('DUPLICATE: ' + dupes[i].join(' | ') + ' — same folder name in ' +
+               dupes[i].length + ' places, the model cannot reliably choose between them');
+  }
+  if (tree.skipped.length) {
+    lines.push('SKIPPED: ' + tree.skipped.join(' | ') + ' — folder name contains "/"');
+  }
+  if (tree.capped) {
+    lines.push('CAPPED: stopped at ' + cfg.maxFolders + ' folders, some are not filing destinations');
+  }
+  if (!lines.length) return;
+
+  const props = PropertiesService.getScriptProperties();
+  const stamp = String(hash_(lines.join('\n')));
+  if (props.getProperty('tree_report') === stamp) return;      // already reported, unchanged
+  props.setProperty('tree_report', stamp);
+  for (let j = 0; j < lines.length; j++) log_(cfg, 'TREE', lines[j]);
+}
+
 /*** THE ONLY PART THAT SPENDS MONEY **************************************/
 
-function classify_(cfg, file) {
-  const allowed = Object.keys(cfg.targets);
+function classify_(cfg, file, tree) {
   const body = {
     model: cfg.model,
-    max_tokens: 300,
+    max_tokens: 400,
     messages: [{
       role: 'user',
       content: [
         { type: 'document',
           source: { type: 'base64', media_type: 'application/pdf',
                     data: Utilities.base64Encode(file.getBlob().getBytes()) } },
-        { type: 'text', text: promptText_(allowed) }
+        { type: 'text', text: promptText_(tree.paths, tree.samples, cfg.folderCreation) }
       ]
     }]
   };
@@ -124,19 +231,37 @@ function classify_(cfg, file) {
   incCallsToday_();
   const json = JSON.parse(res.getContentText());
   const parsed = JSON.parse(stripFences_(json.content[0].text));   // throws -> retry
-  const verdict = validateVerdict_(parsed, allowed);               // never throws
+  const verdict = validateVerdict_(parsed, tree.paths, cfg.maxDepth);  // never throws
+  if (cfg.folderCreation === 'off') verdict.suggested = '';
   verdict._usage = json.usage || {};
   return verdict;
 }
 
 /** Pure. The prompt is a function so the test can assert the folder list is in it. */
-function promptText_(allowedFolders) {
-  return 'This is a scan of a single page, handwritten or printed. ' +
+function promptText_(allowedFolders, samples, folderCreation) {
+  const lines = allowedFolders.map(function (p) {
+    const eg = (samples && samples[p]) || [];
+    return eg.length ? '  ' + p + ' — e.g. ' + eg.join(', ') : '  ' + p;
+  });
+
+  let s = 'This is a scan of a single page, handwritten or printed.\n' +
+    'Existing folders, with examples of what is already filed in each:\n' +
+    lines.join('\n') + '\n' +
     'Reply with JSON only, no prose, no code fences:\n' +
-    '{"name":"YYYY-MM-DD short topic","folder":"<one of: ' +
-    allowedFolders.join(' | ') + '>","confidence":0.0-1.0,"summary":"one sentence"}\n' +
+    '{"name":"YYYY-MM-DD short topic","folder":"<one of the folders above, or empty>",' +
+    '"confidence":0.0-1.0,"summary":"one sentence","suggested_folder":"","ambiguous":[]}\n' +
     'Use the date written or printed on the page if there is one, otherwise today. ' +
-    'If the page is illegible or does not fit any folder, set confidence below 0.5.';
+    'If the page is illegible or does not fit any folder, set confidence below 0.5.\n' +
+    'If two or more folders fit equally well and you cannot choose between them, ' +
+    'list those folders in "ambiguous" and set confidence below 0.5. ' +
+    'Do not pick one arbitrarily.\n';
+
+  if (folderCreation !== 'off') {
+    s += 'If no existing folder fits, leave "folder" empty and put the folder that ' +
+         'should exist in "suggested_folder", as a path such as "Admin/Insurance". ' +
+         'It will not be created automatically.\n';
+  }
+  return s;
 }
 
 function fetchWithRetry_(url, opts) {
@@ -163,15 +288,19 @@ function stripFences_(text) {
     .trim();
 }
 
-/** Coerce a parsed model reply into a verdict. Never throws. An unknown folder
- *  or an out-of-range confidence yields confidence 0, which routes to
- *  _Unsorted with the suggested name still applied. */
-function validateVerdict_(parsed, allowedFolders) {
-  const v = { name: '', folder: '', confidence: 0, summary: '' };
+/**
+ * Coerce a parsed model reply into a verdict. Never throws. An unknown folder
+ * or an out-of-range confidence yields confidence 0, which routes to
+ * _Unsorted with the suggested name still applied.
+ */
+function validateVerdict_(parsed, allowedFolders, maxDepth) {
+  const v = { name: '', folder: '', confidence: 0, summary: '', suggested: '', ambiguous: [] };
   if (!parsed || typeof parsed !== 'object') return v;
 
   if (typeof parsed.name === 'string') v.name = parsed.name;
   if (typeof parsed.summary === 'string') v.summary = parsed.summary;
+  v.suggested = sanitiseSuggestion_(parsed.suggested_folder, maxDepth);
+  v.ambiguous = validateAmbiguous_(parsed.ambiguous, allowedFolders);
 
   if (allowedFolders.indexOf(parsed.folder) === -1) return v;
   if (typeof parsed.confidence !== 'number' || !isFinite(parsed.confidence)) return v;
@@ -180,6 +309,40 @@ function validateVerdict_(parsed, allowedFolders) {
   v.folder = parsed.folder;
   v.confidence = parsed.confidence;
   return v;
+}
+
+/** Candidates the model could not choose between. Only real folders count, and
+ *  fewer than two of them is not an ambiguity. */
+function validateAmbiguous_(raw, allowedFolders) {
+  if (!Array.isArray(raw)) return [];
+  const seen = [];
+  for (let i = 0; i < raw.length; i++) {
+    if (typeof raw[i] !== 'string') continue;
+    if (allowedFolders.indexOf(raw[i]) === -1) continue;
+    if (seen.indexOf(raw[i]) === -1) seen.push(raw[i]);
+  }
+  return seen.length >= 2 ? seen : [];
+}
+
+/**
+ * A suggested folder is advisory today and a real folder name the day
+ * FOLDER_CREATION becomes "auto", so it is sanitised now while it is inert.
+ * Returns '' for anything unusable rather than guessing.
+ */
+function sanitiseSuggestion_(raw, maxDepth) {
+  const depth = maxDepth > 0 ? maxDepth : 3;
+  if (typeof raw !== 'string') return '';
+
+  const segments = raw.split('/')
+    .map(function (s) { return safeName_(s); })
+    .filter(function (s) { return s && s !== 'untitled'; });
+
+  if (!segments.length || segments.length > depth) return '';
+  for (let i = 0; i < segments.length; i++) {
+    const low = segments[i].toLowerCase();
+    if (low === 'inbox' || low === '_unsorted') return '';   // never propose machinery
+  }
+  return segments.join('/').slice(0, 200);
 }
 
 /** Drive-safe filename stem. Never returns an empty string, so a model that
@@ -193,6 +356,51 @@ function safeName_(s) {
     .slice(0, 120)
     .replace(/[. ]+$/, '');
   return cleaned || 'untitled';
+}
+
+/** A folder name containing the path separator would re-parse as two levels,
+ *  which misfiles silently. Excluded from the candidate set instead. */
+function isUsableSegment_(name) {
+  return typeof name === 'string' && name.length > 0 && name.indexOf('/') === -1;
+}
+
+/** Case, accents and punctuation removed, plus a crude plural trim. Used only
+ *  to spot folders worth reporting to a human, never to route a file, so a
+ *  missed synonym costs nothing and a false pair costs one report. */
+function normaliseLabel_(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')   // combining marks left by NFD
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .replace(/s$/, '');
+}
+
+/** Groups of folder paths whose final segment means the same thing. Two folders
+ *  called Insurance and Insurances are a choice the model cannot make well. */
+function findDuplicateGroups_(paths) {
+  const byKey = {};
+  const order = [];
+  for (let i = 0; i < paths.length; i++) {
+    const segs = paths[i].split('/');
+    const key = normaliseLabel_(segs[segs.length - 1]);
+    if (!key) continue;
+    if (!Object.prototype.hasOwnProperty.call(byKey, key)) { byKey[key] = []; order.push(key); }
+    byKey[key].push(paths[i]);
+  }
+  const out = [];
+  for (let j = 0; j < order.length; j++) {
+    if (byKey[order[j]].length >= 2) out.push(byKey[order[j]]);
+  }
+  return out;
+}
+
+/** djb2. Only used to notice that a report has changed since last time. */
+function hash_(s) {
+  let h = 5381;
+  const str = String(s === null || s === undefined ? '' : s);
+  for (let i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0;
+  return h;
 }
 
 /*** HOUSEKEEPING *********************************************************/
@@ -226,7 +434,7 @@ function log_(cfg, status, msg, v) {
   const cost = (u.input_tokens || 0) * cfg.priceIn + (u.output_tokens || 0) * cfg.priceOut;
   SpreadsheetApp.openById(cfg.indexSheetId).getSheets()[0].appendRow([
     new Date(), status, msg,
-    v ? v.folder : '', v ? v.confidence : '', v ? v.summary : '',
+    v ? v.folder : '', v ? v.confidence : '', v ? v.summary : '', v ? v.suggested : '',
     u.input_tokens || '', u.output_tokens || '', cost ? cost.toFixed(5) : ''
   ]);
 }

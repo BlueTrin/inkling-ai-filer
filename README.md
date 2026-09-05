@@ -11,6 +11,9 @@ folder, and the file is renamed and moved.
   limit.
 - **Nothing is ever deleted**, and anything the model is not confident about
   goes to `_Unsorted` rather than to a guessed folder.
+- **The folder tree is read, not configured.** Rename, move or delete folders
+  in Drive and the filer follows, because it discovers destinations on each run
+  rather than reading a list you typed once.
 
 The design idea worth stealing: separate the cheap trigger from the expensive
 brain. A scheduled LLM session that wakes hourly to find an empty folder costs
@@ -39,6 +42,9 @@ work.
                                        │                              │
                                        │ empty?  ──► exit   0 tokens  │
                                        │                              │
+                                       │ walk the tree once, for the  │
+                                       │ list of allowed folders      │
+                                       │                              │
                                        │ for each file:               │
                                        │   settled >60s?              │
                                        │   size < 20MB?               │
@@ -51,9 +57,10 @@ work.
                                        └──────────────────────────────┘
                                    │
                                    ▼
-                        Notes/Work/Projects/
+                        Notes/Work/Projects/   ◄── discovered, not configured
                         Notes/Personal/
-                        Notes/_Unsorted/     ◄── low confidence, oversized, or 3x failed
+                        Notes/_Unsorted/       ◄── low confidence, ambiguous,
+                                                   oversized, or 3x failed
 ```
 
 **Location is the queue.** Anything sitting in `Inbox/` is unprocessed, and
@@ -77,22 +84,26 @@ watermark timestamp, no per-file marker to read back.
       index             <- a Google Sheet
 ```
 
-Copy each folder ID out of its URL: `/folders/<THIS_PART>`.
+Copy **one** ID out of the URL of `Notes/` itself: `/folders/<THIS_PART>`. That
+is the root the filer walks; it finds the destination folders underneath on its
+own, so there is no list of folder IDs to maintain.
 
-Pick the taxonomy before you start: the folder names you create here are the
-labels the model is allowed to emit, and changing them later means re-filing.
-Start with the folders that already have real pages waiting for them. Two or
-three is a fine starting point, because `_Unsorted` absorbs whatever does not
-fit and a monthly glance at it tells you which folder is actually missing.
-Adding a folder later is one new Drive folder and one entry in `TARGETS`;
-removing one means moving files by hand, so err towards fewer.
+These starting folders are a seed, not a commitment. Start with the two or
+three that already have real pages waiting for them and let the rest emerge —
+create a folder in Drive and it becomes a destination on the next run, rename
+one and filing follows the new name, delete one and it stops being offered.
+Nothing here needs editing when you do.
+
+Anything that fits nowhere lands in `_Unsorted` with a note about the folder it
+wishes existed, which is how you find out what the taxonomy is missing rather
+than guessing on day one.
 
 ### 2. Create the index Sheet
 
 A Google Sheet named `index`, with the header row:
 
 ```
-when | status | message | folder | confidence | summary | in_tok | out_tok | usd
+when | status | message | folder | confidence | summary | suggested | in_tok | out_tok | usd
 ```
 
 Every action appends one row. The token columns are what make the running cost
@@ -113,11 +124,15 @@ runs. Project Settings -> Script Properties.
 | `INBOX_ID` | yes | — | Folder ID from the Drive URL |
 | `UNSORTED_ID` | yes | — | |
 | `INDEX_SHEET_ID` | yes | — | From step 2 |
-| `TARGETS` | yes | — | JSON: `{"Work/Projects":"1AbC...","Personal":"1DeF..."}` |
+| `ROOT_ID` | yes | — | The folder discovery walks beneath, e.g. `Notes/` |
 | `DRY_RUN` | no | `true` | Only the exact string `false` goes live |
 | `MODEL` | no | `claude-haiku-4-5` | |
 | `MIN_CONFIDENCE` | no | `0.6` | Below this, the file goes to `_Unsorted` |
 | `DAILY_CALL_CAP` | no | `100` | Runaway-spend backstop |
+| `FOLDER_CREATION` | no | `propose` | `propose` records a suggested folder, `off` drops it. Folders are never created automatically |
+| `MAX_DEPTH` | no | `3` | Levels below the root that discovery descends |
+| `MAX_FOLDERS` | no | `100` | Destination cap. Hitting it is logged, not silent |
+| `SAMPLES_PER_FOLDER` | no | `3` | Example filenames shown per folder |
 | `PRICE_IN_PER_MTOK` / `PRICE_OUT_PER_MTOK` | no | `1.0` / `5.0` | Only affects the index's cost column |
 | `MAX_MB`, `SETTLE_SECONDS`, `MAX_ATTEMPTS` | no | `20`, `60`, `3` | |
 
@@ -134,6 +149,10 @@ Expect three `DRY` rows in the index, two above `MIN_CONFIDENCE` with sensible
 folders and the scribbled one below it. Nothing has moved. Dry run does not
 move files, so re-running it re-classifies and re-charges for everything still
 in `Inbox/` — run it deliberately, not on a loop.
+
+**Check the folder names in those rows before going live.** They are the tree
+as discovered, so if `ROOT_ID` points somewhere unintended you will see it here
+— folders you never meant as filing destinations, or none of the ones you did.
 
 ### 6. Go live
 
@@ -169,6 +188,52 @@ scanner, or a third-party app with a Drive destination. Point it at
 `Notes/Inbox`. Auto-upload usually applies only to scans created *after* it is
 enabled, so anything already in the app has to be uploaded by hand once.
 
+## The folder tree evolves
+
+The destination list is not configuration. On any run that has work to do, the
+filer walks the tree beneath `ROOT_ID` — three levels down, up to 100 folders —
+and whatever it finds is what the model is allowed to choose from. So:
+
+- **Create** a folder in Drive and it is a destination on the next run.
+- **Rename** one and filing follows, because the tree is re-read every time.
+- **Delete** one and it stops being offered. Trashed folders are excluded.
+- **Move** one and its path label changes. Files already filed stay put.
+
+The model is shown a couple of example filenames from each folder alongside its
+name, so a folder called `Misc` is still legible by its contents. That also
+means the tree teaches the model what your folders mean without you having to
+name them carefully.
+
+**No folder is ever created automatically.** When a page fits nowhere, the model
+records the folder it thinks should exist in the `suggested` column and the page
+goes to `_Unsorted`. Group that column once a month and the folders you actually
+need are the ones that keep coming up. See `FOLDER_CREATION`.
+
+### Problems with the tree are reported, not swallowed
+
+Some things a folder tree can do make reliable filing impossible. These append a
+`TREE` row to the index, once — repeated only if the problem changes, so a tree
+you have decided to leave alone does not nag every fifteen minutes.
+
+| Row | Meaning | What to do |
+|---|---|---|
+| `DUPLICATE` | Two or more folders whose names mean the same thing, e.g. `Admin/Insurance` and `Admin/Insurances`. Case, accents, punctuation and a trailing plural are ignored when comparing | Merge them, or accept it. Nothing is filed differently because of this row |
+| `SKIPPED` | A folder name contains `/`, which would re-parse as two levels | Rename it. Until then it is not a destination |
+| `CAPPED` | More than `MAX_FOLDERS` folders exist, so some are not destinations | Raise the cap or prune the tree |
+
+The same name under different parents — `Work/Admin` and `Personal/Admin` — is
+reported too. That is often deliberate, and dismissing it costs one glance.
+
+### When the model cannot choose
+
+If two folders fit a page equally well, the model is told to say so rather than
+pick one. Those pages get an `AMBIGUOUS` row naming both candidates and go to
+`_Unsorted` with their suggested name applied.
+
+This is the case duplicate folders actually cause, and it is the reason the
+report above exists: an arbitrary pick between two plausible folders is the
+misfile that is hardest to notice later.
+
 ## What happens when the model is wrong
 
 Two failure classes, deliberately handled differently:
@@ -198,6 +263,22 @@ Other failure modes and what covers them:
 | Oversized scan | Files over `MAX_MB` parked in `_Unsorted`, before any API call |
 | Script crashes mid-batch | Queue-by-location: the next run resumes where it stopped |
 | Key leaked | The key lives in Script Properties, never in the source |
+| `ROOT_ID` points too high, e.g. at My Drive | The discovered set is listed in the dry run before anything moves |
+| Two folders mean the same thing | Reported as `DUPLICATE`; pages that cannot be placed become `AMBIGUOUS` rather than a coin flip |
+| Folder renamed mid-batch | One page at most goes to `_Unsorted`, which is the designed handling for an unknown label |
+
+## Index statuses
+
+| Status | Meaning |
+|---|---|
+| `FILED` | Renamed and moved into a folder |
+| `UNSORTED` | Below `MIN_CONFIDENCE`, or an unrecognised folder. Name still applied |
+| `AMBIGUOUS` | Two or more folders fit equally. Both named in the message |
+| `TREE` | A problem with the folder structure. See above |
+| `PARKED` | Oversized, or failed `MAX_ATTEMPTS` times |
+| `RETRY` | A transient failure; the file stays in `Inbox/` |
+| `CAP` | `DAILY_CALL_CAP` reached; the run stopped |
+| `DRY` | `DRY_RUN` is on. The message carries what would have happened |
 
 ## Cost
 
