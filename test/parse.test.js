@@ -439,3 +439,46 @@ test('cleanNote_', async (t) => {
     assert.strictEqual(f('\uFEFF# Title\ntext', 300), 'Title text');
   });
 });
+
+test('indexRow_ / indexHeader_', async (t) => {
+  const CFG = { priceIn: 1.0 / 1e6, priceOut: 5.0 / 1e6 };
+  const when = new Date('2026-09-05T18:37:39Z');
+  const v = (o) => gs.validateVerdict_(o, FOLDERS, 3);
+
+  await t.test('the row lines up with the header', () => {
+    const row = gs.indexRow_(CFG, 'FILED', 'a.pdf', v({ folder: 'Personal', confidence: 0.9 }), when);
+    assert.strictEqual(row.length, gs.indexHeader_().length);
+  });
+
+  await t.test('the timestamp is the first column', () => {
+    assert.strictEqual(gs.indexHeader_()[0], 'when');
+    assert.strictEqual(gs.indexRow_(CFG, 'FILED', 'a.pdf', null, when)[0], when);
+  });
+
+  await t.test('costs the usage at the configured prices', () => {
+    const verdict = v({ folder: 'Personal', confidence: 0.9 });
+    verdict._usage = { input_tokens: 9500, output_tokens: 96 };
+    const row = gs.indexRow_(CFG, 'FILED', 'a.pdf', verdict, when);
+    assert.strictEqual(row[7], 9500);
+    assert.strictEqual(row[8], 96);
+    assert.strictEqual(row[9], '0.00998');
+  });
+
+  await t.test('a row with no usage leaves the token and cost cells blank', () => {
+    const row = gs.indexRow_(CFG, 'TREE', 'DUPLICATE: a | b', null, when);
+    assert.strictEqual(row[7], '');
+    assert.strictEqual(row[8], '');
+    assert.strictEqual(row[9], '');
+  });
+
+  await t.test('an unfiled row carries its explanation in the message', () => {
+    const row = gs.indexRow_(CFG, 'UNSORTED', 'a.pdf', v({ folder: 'Made/Up' }), when);
+    assert.ok(row[2].startsWith('a.pdf ['));
+    assert.ok(row[2].includes('not in the tree'));
+  });
+
+  await t.test('a filed row keeps its message clean', () => {
+    const row = gs.indexRow_(CFG, 'FILED', 'a.pdf', v({ folder: 'Personal', confidence: 0.9 }), when);
+    assert.strictEqual(row[2], 'a.pdf');
+  });
+});

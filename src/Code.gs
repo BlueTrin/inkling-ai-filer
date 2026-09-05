@@ -516,13 +516,38 @@ function incCallsToday_() {
   props.setProperty(callsTodayKey_(), String(callsToday_() + 1));
 }
 
-function log_(cfg, status, msg, v) {
+/** The index columns. A function rather than a constant because this file must
+ *  have no top-level statements — see the header comment. */
+function indexHeader_() {
+  return ['when', 'status', 'message', 'folder', 'confidence', 'summary',
+          'suggested', 'in_tok', 'out_tok', 'usd'];
+}
+
+/** Pure. One index row, timestamp first, in indexHeader_ order. */
+function indexRow_(cfg, status, msg, v, when) {
   const u = (v && v._usage) || {};
-  msg = msg + verdictNotes_(v);
   const cost = (u.input_tokens || 0) * cfg.priceIn + (u.output_tokens || 0) * cfg.priceOut;
-  SpreadsheetApp.openById(cfg.indexSheetId).getSheets()[0].appendRow([
-    new Date(), status, msg,
+  return [
+    when, status, msg + verdictNotes_(v),
     v ? v.folder : '', v ? v.confidence : '', v ? v.summary : '', v ? v.suggested : '',
     u.input_tokens || '', u.output_tokens || '', cost ? cost.toFixed(5) : ''
-  ]);
+  ];
+}
+
+/** The index sheet, with its header row guaranteed. A sheet that has never been
+ *  written to gets the header now, so nothing has to be typed by hand and the
+ *  timestamp column always exists. */
+function indexSheet_(cfg) {
+  const sheet = SpreadsheetApp.openById(cfg.indexSheetId).getSheets()[0];
+  if (sheet.getLastRow() === 0) sheet.appendRow(indexHeader_());
+  return sheet;
+}
+
+/** Newest first: every row is inserted directly beneath the header rather than
+ *  appended, so the most recent action is the one you see without scrolling. */
+function log_(cfg, status, msg, v) {
+  const sheet = indexSheet_(cfg);
+  const row = indexRow_(cfg, status, msg, v, new Date());
+  sheet.insertRowAfter(1);
+  sheet.getRange(2, 1, 1, row.length).setValues([row]);
 }
