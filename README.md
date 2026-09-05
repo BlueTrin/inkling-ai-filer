@@ -1,33 +1,31 @@
 # inkling-ai-filer
 
-Scanned pages land in a Google Drive folder. Every 15 minutes a Google Apps
-Script lists that folder. If it is empty it exits, having spent nothing. If it
-is not, each page goes to Claude once, comes back with a name and a topic
-folder, and the file is renamed and moved.
+Scan a page on your phone. A few minutes later it is sitting in the right
+folder in Google Drive, under a name that tells you what it is.
 
-- **$0 and zero tokens on an idle day.** The poller is a folder listing, not a
-  model call.
-- **~$0.005 a page** when there is something to file — nearer 1p for a
-  multi-page document — capped by a daily call limit.
-- **Nothing is ever deleted**, and anything the model is not confident about
-  goes to `_Unsorted` rather than to a guessed folder.
-- **The folder tree is read, not configured.** Rename, move or delete folders
-  in Drive and the filer follows, because it discovers destinations on each run
-  rather than reading a list you typed once.
+That is the whole product. There is no app to open and no interface. A Google
+Apps Script watches one Drive folder; when something lands in it, the page goes
+to Claude once, comes back with a name and a destination, and gets filed. On
+days when you scan nothing, nothing happens and nothing is spent.
 
-The design idea worth stealing: separate the cheap trigger from the expensive
-brain. A scheduled LLM session that wakes hourly to find an empty folder costs
-real money to learn nothing, because it reloads its system prompt, tool
-definitions and connector schemas before it can look. A cron-shaped thing that
-is not an LLM does the same check for free, and you only pay when there is
-work.
+It is deliberately small — about 500 lines of one file — and it is built so
+that the parts most likely to go wrong fail visibly rather than quietly.
 
-## Layout
+## The idea worth stealing
 
-```
-  src/Code.gs          the whole implementation, ~200 lines
-  test/parse.test.js   the pure parsing path, node --test
-```
+The obvious way to build this is a scheduled AI agent that wakes up every hour
+and checks the folder. That costs real money to learn nothing, because a fresh
+session has to load its system prompt, its tool definitions and its connector
+schemas before it can so much as look at an empty folder. Do that around the
+clock and you are paying a monthly subscription's worth to be told "no new
+files" seven hundred times.
+
+So the trigger and the brain are separated. The thing that wakes up every
+fifteen minutes is not an LLM — it is a folder listing, which is free. The
+model is only ever invoked once there is a page in front of it. An idle day
+costs nothing at all, and a busy one costs about a penny a document.
+
+Everything else follows from that split.
 
 ## How it works
 
@@ -53,179 +51,121 @@ work.
                                        │   ◄──────────────────────────┼─── {name, folder,
                                        │                              │     confidence, summary}
                                        │   rename + moveTo(target)    │
-                                       │   append row to index Sheet  │
+                                       │   log a row to the index     │
                                        └──────────────────────────────┘
                                    │
                                    ▼
-                        Notes/Work/Projects/   ◄── discovered, not configured
-                        Notes/Personal/
-                        Notes/_Unsorted/       ◄── low confidence, ambiguous,
-                                                   oversized, or 3x failed
+                        Notes/Invoices/        ◄── discovered, not configured
+                        Notes/Contracts/
+                        Notes/_Unsorted/      ◄── low confidence, ambiguous,
+                                                  oversized, or 3x failed
 ```
 
-**Location is the queue.** Anything sitting in `Inbox/` is unprocessed, and
-processing ends by moving the file out. That makes the whole thing idempotent
-by construction, self-healing after a crashed run, and inspectable by eye — no
-watermark timestamp, no per-file marker to read back.
+**The folder is the queue.** Anything sitting in `Inbox/` is unprocessed, and
+processing ends by moving the file out. Nothing tracks what has been done
+already — no watermark timestamp, no marker written into each file — because
+the location says it. That one choice is why the system is idempotent, why it
+recovers from a crash halfway through a batch without any cleanup, and why you
+can tell at a glance whether it is behind.
 
-## Setup
+## Setting it up
 
-### 1. Create the Drive layout
+Half an hour, most of it waiting for Drive.
 
-```
-  My Drive/
-    Notes/
-      Inbox/            <- scanner auto-upload target. Work queue. Normally empty
-      Work/
-        Projects/
-        Other/
-      Personal/
-      _Unsorted/        <- needs a human glance
-      index             <- a Google Sheet
-```
+**1. Make the folders.** In Drive, create a folder — `Notes` is as good a name
+as any — and inside it two folders that are machinery rather than filing:
+`Inbox`, where scans land, and `_Unsorted`, where anything the filer cannot
+place goes. Then create two or three topic folders for the paperwork you
+actually have.
 
-Copy **one** ID out of the URL of `Notes/` itself: `/folders/<THIS_PART>`. That
-is the root the filer walks; it finds the destination folders underneath on its
-own, so there is no list of folder IDs to maintain.
+Do not agonise over the taxonomy. It is a seed, not a commitment: you can add,
+rename, move and delete folders later and the filer just follows, because it
+reads the tree fresh on every run rather than a list you typed once. Starting
+with too few is the cheaper mistake — `_Unsorted` will tell you what is
+missing.
 
-These starting folders are a seed, not a commitment. Start with the two or
-three that already have real pages waiting for them and let the rest emerge —
-create a folder in Drive and it becomes a destination on the next run, rename
-one and filing follows the new name, delete one and it stops being offered.
-Nothing here needs editing when you do.
+Copy one ID out of the URL of `Notes` itself, the part after `/folders/`. The
+filer finds everything underneath on its own, so that is the only folder ID you
+will need besides the two machinery folders.
 
-Anything that fits nowhere lands in `_Unsorted` with a note about the folder it
-wishes existed, which is how you find out what the taxonomy is missing rather
-than guessing on day one.
+**2. Make the index.** A blank Google Sheet, in the same folder. That is the
+entire step — the script writes its own header the first time it logs
+something, and every action after that is inserted at the top, so the most
+recent thing is the first thing you see.
 
-### 2. Create the index Sheet
+The index is worth more than it sounds. It is an audit log, a running cost
+meter, and — because every row carries a one-line summary of the document — a
+searchable table of your paperwork that builds itself.
 
-A blank Google Sheet named `index`. That is the whole step — the script writes
-its own header row the first time it logs anything:
+**3. Install the script.** Go to [script.google.com](https://script.google.com),
+make a new project, delete the stub it gives you, and paste in `src/Code.gs`.
 
-```
-when | status | message | folder | confidence | summary | suggested | in_tok | out_tok | usd
-```
+**4. Fill in five settings.** Project Settings → Script Properties. You need
+`ROOT_ID`, `INBOX_ID`, `UNSORTED_ID` and `INDEX_SHEET_ID` — the IDs from steps
+1 and 2 — plus `ANTHROPIC_KEY` from
+[console.anthropic.com](https://console.anthropic.com), which needs a few
+dollars of credit on it. Everything else has a sensible default; the full list
+is in [Miscellaneous](#every-setting).
 
-Every action inserts one row **directly beneath the header**, so the most recent
-thing that happened is the first thing you see. The token columns are what make
-the running cost auditable — sum the `usd` column monthly rather than trusting
-any estimate.
+No configuration lives in this repo, which is what makes the committed file the
+file that runs.
 
-### 3. Install the script
+**5. Do a dry run.** Put two or three pages in `Inbox`, wait a minute, then run
+`watchInbox` by hand from the editor and accept the permissions when asked.
 
-script.google.com -> new project -> paste `src/Code.gs`.
+Nothing moves. You get one row per page saying what *would* have happened.
+Read them: the folder names in those rows are the tree as the script discovered
+it, so if `ROOT_ID` is pointing somewhere unintended, this is where you find
+out — before anything has been touched.
 
-### 4. Script Properties
+A dry run still calls the model, so it costs the same as a real one. It also
+does not empty `Inbox`, which means re-running it re-classifies and re-charges
+for everything still sitting there. Run it deliberately.
 
-No configuration lives in this repo, so the file you commit is the file that
-runs. Project Settings -> Script Properties.
+**6. Go live.** Add a `DRY_RUN` property set to the exact string `false`, and
+run `watchInbox` once more by hand. This time the files are renamed and moved,
+and `Inbox` should end up empty. Going live is a settings change, not a code
+change.
 
-| Property | Required | Default | Notes |
-|---|---|---|---|
-| `ANTHROPIC_KEY` | yes | — | From console.anthropic.com |
-| `INBOX_ID` | yes | — | Folder ID from the Drive URL |
-| `UNSORTED_ID` | yes | — | |
-| `INDEX_SHEET_ID` | yes | — | From step 2 |
-| `ROOT_ID` | yes | — | The folder discovery walks beneath, e.g. `Notes/` |
-| `DRY_RUN` | no | `true` | Only the exact string `false` goes live |
-| `MODEL` | no | `claude-haiku-4-5` | |
-| `MIN_CONFIDENCE` | no | `0.6` | Below this, the file goes to `_Unsorted` |
-| `DAILY_CALL_CAP` | no | `100` | Runaway-spend backstop |
-| `FOLDER_CREATION` | no | `propose` | `propose` records a suggested folder, `off` drops it. Folders are never created automatically |
-| `MAX_DEPTH` | no | `3` | Levels below the root that discovery descends |
-| `MAX_FOLDERS` | no | `100` | Destination cap. Hitting it is logged, not silent |
-| `SAMPLES_PER_FOLDER` | no | `3` | Example filenames shown per folder |
-| `NOTE_FILE` | no | `README.md` | Filename read for a folder's description of itself |
-| `NOTE_CHARS` | no | `300` | How much of that note reaches the prompt |
-| `DATE_FORMAT` | no | `yyyy-mm-dd hh:mm:ss` | Timestamp format in the index |
-| `PRICE_IN_PER_MTOK` / `PRICE_OUT_PER_MTOK` | no | `1.0` / `5.0` | Only affects the index's cost column |
-| `MAX_MB`, `SETTLE_SECONDS`, `MAX_ATTEMPTS` | no | `20`, `60`, `3` | |
+**7. Try to break it, while you still can.** Two minutes, and worth doing
+before there is a trigger that could repeat a bad result every quarter of an
+hour. Drop a 40 MB file in `Inbox` — it should be parked in `_Unsorted` with
+no API call at all, since the size check runs before anything expensive. Then
+set the API key to nonsense and add a page: expect three retries, a note in the
+file's description, and the file still sitting safely in `Inbox`. Put the real
+key back and it files on the next run.
 
-`DRY_RUN` defaults to true and only the exact string `false` disables it, so a
-missing or misspelled property cannot silently start moving files.
+**8. Schedule it.** Triggers → Add Trigger → `watchInbox`, time-driven, every
+fifteen minutes. Polling more often costs nothing extra — an empty check is
+free — so the interval is a latency choice, not a cost one.
 
-**A scheduled run refuses to run dry.** A dry run never empties `Inbox`, so on
-a 15-minute trigger the same files would be re-classified and re-billed every
-cycle until the daily cap — silently, since nothing is obviously wrong. If the
-trigger fires while `DRY_RUN` is on, the run throws before spending anything;
-Apps Script surfaces that in the execution log and its failure notification.
-Manual dry runs are unaffected, which is the only way you should be doing
-them.
+**9. Point a scanner at `Inbox`.** Any scanner app that can auto-upload to
+Drive will do, including the Drive app's own. Auto-upload usually applies only
+to scans made after you switch it on, so anything already in the app needs
+uploading by hand once.
 
-### 5. Dry run
+## Living with it
 
-Put three test pages in `Inbox/` — one clearly matching a folder, one clearly
-matching another, one deliberately scribbled. Run `watchInbox` by hand and
-accept the Drive and external-request scopes when prompted.
+### The tree is yours to reorganise
 
-Expect three `DRY` rows in the index, two above `MIN_CONFIDENCE` with sensible
-folders and the scribbled one below it. Nothing has moved. Dry run does not
-move files, so re-running it re-classifies and re-charges for everything still
-in `Inbox/` — run it deliberately, not on a loop.
+The list of destinations is not configuration. On every run that has work to
+do, the filer walks the tree beneath your root folder and whatever it finds is
+what the model may choose from. Create a folder and it is a destination on the
+next run. Rename one and filing follows the new name. Delete one and it stops
+being offered. Move one and its label changes. None of that requires touching
+the script or its settings.
 
-**Check the folder names in those rows before going live.** They are the tree
-as discovered, so if `ROOT_ID` points somewhere unintended you will see it here
-— folders you never meant as filing destinations, or none of the ones you did.
-
-### 6. Go live
-
-Set `DRY_RUN` to the exact string `false` and run `watchInbox` by hand once
-more. Going live is a properties edit, not a code edit, so it is not a commit.
-
-Expect the confident files filed into their folders, the scribbled one in
-`_Unsorted`, and three new index rows carrying token counts. `Inbox/` should
-now be empty; if a file is still there, read its description for `attempts=`.
-
-### 7. Edge cases, before scheduling
-
-Run these by hand while no trigger exists, so a bad result cannot repeat every
-15 minutes.
-
-| Test | Action | Expected |
-|---|---|---|
-| Oversized | Drop a 40 MB file in `Inbox/` | `PARKED — oversized`, moved to `_Unsorted`, **no API call** |
-| Bad key | Set `ANTHROPIC_KEY` to garbage, add one page | Three retries, then `attempts=1` in the file description, file left in `Inbox/`, no crash loop |
-
-Restore the real key afterwards and confirm the parked page processes on the
-next manual run.
-
-### 8. Schedule the trigger
-
-Triggers -> Add trigger -> function `watchInbox`, time-driven, every 15
-minutes. The system is unattended from here.
-
-### 9. Point a scanner at Inbox
-
-Any scanner app that auto-uploads to Drive works — the iOS Drive app's own
-scanner, or a third-party app with a Drive destination. Point it at
-`Notes/Inbox`. Auto-upload usually applies only to scans created *after* it is
-enabled, so anything already in the app has to be uploaded by hand once.
-
-## The folder tree evolves
-
-The destination list is not configuration. On any run that has work to do, the
-filer walks the tree beneath `ROOT_ID` — three levels down, up to 100 folders —
-and whatever it finds is what the model is allowed to choose from. So:
-
-- **Create** a folder in Drive and it is a destination on the next run.
-- **Rename** one and filing follows, because the tree is re-read every time.
-- **Delete** one and it stops being offered. Trashed folders are excluded.
-- **Move** one and its path label changes. Files already filed stay put.
-
-The model is shown a couple of example filenames from each folder alongside its
-name, so a folder called `Misc` is still legible by its contents. That also
-means the tree teaches the model what your folders mean without you having to
-name them carefully.
+To help the model understand a folder, it is shown a couple of the filenames
+already inside it — so a folder called `Misc` is still legible by its contents.
 
 ### Telling the model what a folder is for
 
-A folder name is often too small to carry its meaning. `Admin` might mean
-council tax, or invoices you have issued, or both — and a folder you
-created five minutes ago has no contents to infer it from.
+A folder name is often too small to carry its meaning. `Admin` might be bank
+statements, or invoices you have issued, or both, and a folder you made five
+minutes ago has no contents to infer it from.
 
-Put a **`README.md`** inside any folder and its text is shown to the model
-beside the folder name:
+Put a `README.md` inside any folder and its text is shown to the model beside
+the folder name:
 
 ```markdown
 # Admin
@@ -234,96 +174,138 @@ Council tax, TV licence and DVLA correspondence.
 Anything from a bank, broker or DVLA provider.
 ```
 
-Markdown structure is flattened to a single line, so headings and bullets are
-fine — only the words reach the prompt. Entirely optional, per folder: without
-one, the folder falls back to its name plus a few example filenames.
+Optional, per folder, and markdown structure is flattened away so only the
+words reach the model. This is a better home for scope than the folder name is:
+you can change what a folder means without renaming it and re-filing everything
+already inside.
 
-The note file never appears in those examples, and a missing, empty or
-unreadable one is treated as no note rather than an error — a broken README
-must never stop a page being filed.
+### It will not invent folders
 
-This is also the better place for scope than the folder name. `Admin` with a
-note explaining it covers bills beats a folder called
-`Admin-and-Bills`, because you can change what a folder means without
-renaming it and re-filing what is already inside.
+When a page fits nowhere, the model records the folder it thinks *should* exist
+and the page goes to `_Unsorted`. It never creates anything.
 
-**No folder is ever created automatically.** When a page fits nowhere, the model
-records the folder it thinks should exist in the `suggested` column and the page
-goes to `_Unsorted`. Group that column once a month and the folders you actually
-need are the ones that keep coming up. See `FOLDER_CREATION`.
+That is deliberate, and it is the decision most likely to be second-guessed by
+someone who has not watched it go wrong. A model that can create folders
+produces sprawl — `Insurance` in March, `Insurance renewals` in May, `Home
+insurance` in July, each defensible on the day. Sprawl is worse than a full
+`_Unsorted` because it is invisible: the tree still looks organised, and the
+duplicates become the context for the next decision.
 
-### Problems with the tree are reported, not swallowed
+So the suggestions accumulate in a column instead. Read them once a month; the
+folder you actually need is the one that keeps coming up. Then make it by hand,
+in five seconds, and the filer picks it up on the next run.
 
-Some things a folder tree can do make reliable filing impossible. These append a
-`TREE` row to the index, once — repeated only if the problem changes, so a tree
-you have decided to leave alone does not nag every fifteen minutes.
+### When it is not sure
 
-| Row | Meaning | What to do |
+Anything the model is not confident about goes to `_Unsorted` rather than to a
+guessed folder, and if two folders fit a page equally well the model is told to
+say so rather than pick one. A wrong confident guess costs more than an
+unsorted file, because the unsorted file is visible and the misfiled one is
+not.
+
+The filer also notices when your tree has become hard to file into — two
+folders whose names mean the same thing, a folder name containing a slash, more
+folders than it will consider — and says so in the index. Once, not every
+fifteen minutes.
+
+### When something goes wrong
+
+Failures are sorted into two kinds, because they deserve opposite treatment.
+Transient ones — a network blip, a truncated reply, a 500 — are retried, three
+times, and then the file is parked with a counter in its description. Permanent
+ones — a well-formed reply naming a folder that does not exist — are *not*
+retried, because spending another API call to be told the same thing twice is
+just spending.
+
+Nothing is ever deleted, and Drive keeps version history, so the worst outcome
+is a file in the wrong place that you drag back.
+
+---
+
+# Miscellaneous
+
+Reference material. Nothing here is needed to use the thing.
+
+## Every setting
+
+All configuration is Script Properties. Only the first five are required.
+
+| Property | Default | Notes |
 |---|---|---|
-| `DUPLICATE` | Two or more folders whose names mean the same thing, e.g. `Admin/Insurance` and `Admin/Insurances`. Case, accents, punctuation and a trailing plural are ignored when comparing | Merge them, or accept it. Nothing is filed differently because of this row |
-| `SKIPPED` | A folder name contains `/`, which would re-parse as two levels | Rename it. Until then it is not a destination |
-| `CAPPED` | More than `MAX_FOLDERS` folders exist, so some are not destinations | Raise the cap or prune the tree |
+| `ANTHROPIC_KEY` | — | From console.anthropic.com |
+| `ROOT_ID` | — | The folder discovery walks beneath |
+| `INBOX_ID` | — | Where scans land |
+| `UNSORTED_ID` | — | Where the unplaceable go |
+| `INDEX_SHEET_ID` | — | The log Sheet |
+| `DRY_RUN` | `true` | Only the exact string `false` goes live |
+| `MODEL` | `claude-haiku-4-5` | |
+| `MIN_CONFIDENCE` | `0.6` | Below this, the file goes to `_Unsorted` |
+| `DAILY_CALL_CAP` | `100` | Runaway-spend backstop |
+| `FOLDER_CREATION` | `propose` | `propose` records a suggestion; `off` drops it. Folders are never created |
+| `MAX_DEPTH` | `3` | Levels below the root that discovery descends |
+| `MAX_FOLDERS` | `100` | Destination cap. Hitting it is logged, not silent |
+| `SAMPLES_PER_FOLDER` | `3` | Example filenames shown per folder |
+| `NOTE_FILE` | `README.md` | The file read for a folder's description of itself |
+| `NOTE_CHARS` | `300` | How much of that note reaches the prompt |
+| `DATE_FORMAT` | `yyyy-mm-dd hh:mm:ss` | Timestamp format in the index |
+| `MAX_MB` | `20` | Larger files are parked without an API call |
+| `SETTLE_SECONDS` | `60` | Files touched more recently are assumed to be still uploading |
+| `MAX_ATTEMPTS` | `3` | Strikes before a file is parked |
+| `PRICE_IN_PER_MTOK` / `PRICE_OUT_PER_MTOK` | `1.0` / `5.0` | Only affects the index's cost column |
 
-The same name under different parents — `Work/Admin` and `Personal/Admin` — is
-reported too. That is often deliberate, and dismissing it costs one glance.
+`DRY_RUN` defaults to true and only the exact string `false` disables it, so a
+missing or misspelled property cannot start moving files.
 
-### When the model cannot choose
-
-If two folders fit a page equally well, the model is told to say so rather than
-pick one. Those pages get an `AMBIGUOUS` row naming both candidates and go to
-`_Unsorted` with their suggested name applied.
-
-This is the case duplicate folders actually cause, and it is the reason the
-report above exists: an arbitrary pick between two plausible folders is the
-misfile that is hardest to notice later.
-
-## What happens when the model is wrong
-
-Two failure classes, deliberately handled differently:
-
-| Reply | Class | Handling |
-|---|---|---|
-| Prose, truncated JSON, HTTP 5xx | Transient | Throws, attempt counter bumped, 3 strikes then `_Unsorted` |
-| Valid JSON naming a folder that does not exist, or `confidence: "0.9"` | Deterministic | Confidence 0, straight to `_Unsorted`, **no retry** |
-
-Retrying a deterministic failure spends money to get the same answer back.
-`validateVerdict_` never throws; `JSON.parse` still does.
-
-An unrecognised folder is not trusted, but the model's suggested *name* is
-still applied, so the file arrives in `_Unsorted` already readable. A wrong
-confident guess costs more than an unsorted file, because an unsorted file is
-visible and a misfiled one is not.
-
-Other failure modes and what covers them:
-
-| Failure | Mitigation |
-|---|---|
-| File still uploading when the trigger fires | `SETTLE_SECONDS` skips files modified in the last 60s |
-| Two runs overlap | `LockService.tryLock(0)` |
-| Model returns a fenced reply | Fences stripped before parsing |
-| API 429 or 5xx | 3 retries, exponential backoff, then the attempt counter |
-| Runaway loop | `DAILY_CALL_CAP` |
-| Oversized scan | Files over `MAX_MB` parked in `_Unsorted`, before any API call |
-| Script crashes mid-batch | Queue-by-location: the next run resumes where it stopped |
-| Key leaked | The key lives in Script Properties, never in the source |
-| `ROOT_ID` points too high, e.g. at My Drive | The discovered set is listed in the dry run before anything moves |
-| Two folders mean the same thing | Reported as `DUPLICATE`; pages that cannot be placed become `AMBIGUOUS` rather than a coin flip |
-| Folder renamed mid-batch | One page at most goes to `_Unsorted`, which is the designed handling for an unknown label |
+**A scheduled run refuses to run dry.** A dry run never empties `Inbox`, so on
+a trigger it would re-classify and re-bill the same files every cycle, silently.
+If the trigger fires while `DRY_RUN` is on, the run throws before spending
+anything. Manual dry runs are unaffected, which is the only way you should be
+doing them.
 
 ## Index statuses
 
 | Status | Meaning |
 |---|---|
 | `FILED` | Renamed and moved into a folder |
-| `UNSORTED` | Below `MIN_CONFIDENCE`, or an unrecognised folder. Name still applied |
+| `UNSORTED` | Below `MIN_CONFIDENCE`, or an unrecognised folder. The name is still applied |
 | `AMBIGUOUS` | Two or more folders fit equally. Both named in the message |
-| `TREE` | A problem with the folder structure. See above |
+| `TREE` | A problem with the folder structure |
 | `PARKED` | Oversized, or failed `MAX_ATTEMPTS` times |
-| `RETRY` | A transient failure; the file stays in `Inbox/` |
+| `RETRY` | A transient failure; the file stays in `Inbox` |
 | `CAP` | `DAILY_CALL_CAP` reached; the run stopped |
-| `DRY` | `DRY_RUN` is on. The message carries what would have happened |
+| `DRY` | `DRY_RUN` is on. The message says what would have happened |
 
-## Cost
+Rows that were not filed carry a short explanation in the message column —
+whether the model declined to choose, named a folder that does not exist, or
+offered a suggestion that was rejected. Those three look identical in the
+folder column and need telling apart.
+
+`TREE` rows come in three kinds: `DUPLICATE` for two folders whose names mean
+the same thing once case, accents, punctuation and a trailing plural are
+ignored; `SKIPPED` for a folder name containing `/`, which would re-parse as
+two levels; and `CAPPED` for exceeding `MAX_FOLDERS`. The same name under two
+different parents is reported too — often deliberate, and dismissing it costs
+one glance.
+
+## Failure modes
+
+| Failure | Mitigation |
+|---|---|
+| File still uploading when the trigger fires | `SETTLE_SECONDS` skips recently modified files |
+| Two runs overlap | `LockService.tryLock(0)` |
+| Model returns a fenced reply | Fences stripped before parsing |
+| Model returns prose | Parse throws, counts as an attempt, 3 strikes to `_Unsorted` |
+| Model names a folder that does not exist | Confidence 0, no retry, and the name is kept as a suggestion |
+| API 429 or 5xx | 3 retries, exponential backoff, then the attempt counter |
+| Runaway loop | `DAILY_CALL_CAP` |
+| Oversized scan | Parked before any API call |
+| Script crashes mid-batch | The next run resumes where it stopped, because location is the queue |
+| Key leaked | The key lives in Script Properties, never in the source |
+| `ROOT_ID` points too high | The discovered set is listed in the dry run before anything moves |
+| Two folders mean the same thing | Reported as `DUPLICATE`; unplaceable pages become `AMBIGUOUS` rather than a coin flip |
+| Folder renamed mid-batch | At most one page goes to `_Unsorted` |
+
+## What it costs
 
 ```
   per page:  ~4,000 input tokens (scanned page image) x $1/MTok  = $0.0040
@@ -332,31 +314,30 @@ Other failure modes and what covers them:
                                                                    $0.0050
 ```
 
-**Budget per document, not per page.** That figure is per page and holds up in
-practice, but real paperwork is rarely one page. Measured on live runs: a
-one-page letter came to ~4,200 input tokens ($0.005), while a
-multi-page bill came to ~9,500 ($0.010). Input tokens dominate
-entirely — output is a hundred-odd tokens either way.
+Budget per document rather than per page: that figure holds up, but real
+paperwork is rarely one page. Measured on live runs, a one-page letter
+came to about 4,200 input tokens and a multi-page bill to about 9,500 —
+half a cent and a cent respectively. Input dominates completely; output is a
+hundred-odd tokens either way.
 
 ```
   150 documents/month  ->  ~$1.50      idle month  ->  $0.00
   daily cap 100 calls  ->  worst case ~$1/day
 ```
 
-The folder list, the folder notes and the example filenames are all sent on
-every call, so a large taxonomy raises the per-page cost — a few hundred extra
-tokens for a handful of folders, more like 2,000 at the 100-folder cap.
+The folder list, the folder notes and the example filenames are sent on every
+call, so a large tree raises the per-page cost — a few hundred tokens for a
+handful of folders, nearer 2,000 at the cap.
 
-Hosting is $0: the Apps Script free quota is roughly 90 minutes of runtime and
-20,000 `UrlFetchApp` calls a day, and an idle check uses about a second and no
-fetches. Free-tier limits and API prices both change — re-check before relying
-on these numbers.
+Hosting is free. The Apps Script quota is roughly 90 minutes of runtime and
+20,000 outbound fetches a day; an idle check takes about a second and no
+fetches, so ninety-six of them a day is under two minutes. Free-tier limits and
+API prices both change — re-check before relying on any of this.
 
-## Naming convention
+## Naming
 
-`YYYY-MM-DD topic.pdf`, e.g. `2026-09-06 project kickoff notes.pdf`. Date first
-so alphabetical order is chronological order. Drive appends ` (2)` on
-collisions.
+`YYYY-MM-DD topic.pdf`, so alphabetical order is chronological order. Drive
+appends ` (2)` on collisions.
 
 ## Tests
 
@@ -365,17 +346,20 @@ npm test
 ```
 
 `Code.gs` cannot be unit-tested inside Apps Script, but the functions that
-decide where a file goes are pure and have no top-level side effects, so the
-test evaluates the source in a `vm` context and exercises them directly. That
-covers the failure most likely to go unnoticed: a model reply that is prose, or
-fenced, or names a folder that does not exist.
+decide where a file goes are pure and the file has no top-level statements, so
+the suite evaluates the source in a `vm` context and calls them directly. It
+covers the failures most likely to go unnoticed: a reply that is prose, or
+fenced, or names a folder that does not exist; a suggestion that should have
+been rejected; two folder names that mean the same thing.
+
+Anything touching Drive, Sheets or the API is not covered, and is what the dry
+run in step 5 is for.
 
 ## Version control for the deployed script
 
-`clasp` is worth adding only once the thing has classified a page — a login, an
-`appsscript.json` and a script id are three new failure modes, and adding them
-to the critical path early means debugging the deployment tool and the design
-at the same time.
+`clasp` is worth adding only once the thing has filed a page — a login, an
+`appsscript.json` and a script id are three new ways to fail, and adding them
+early means debugging the deployment tool and the design at the same time.
 
 ```bash
 npm i -g @google/clasp
@@ -383,8 +367,6 @@ clasp login
 clasp clone <SCRIPT_ID>        # writes .clasp.json, which .gitignore excludes
 clasp push
 ```
-
-From then on `src/Code.gs` is edited here, tested with `npm test`, and pushed.
 
 ## Licence
 
