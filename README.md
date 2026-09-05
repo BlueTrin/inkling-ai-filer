@@ -11,21 +11,33 @@ days when you scan nothing, nothing happens and nothing is spent.
 It is deliberately small — about 500 lines of one file — and it is built so
 that the parts most likely to go wrong fail visibly rather than quietly.
 
-## The idea worth stealing
+## Why it's a Google Apps Script
 
-The obvious way to build this is a scheduled AI agent that wakes up every hour
-and checks the folder. That costs real money to learn nothing, because a fresh
-session has to load its system prompt, its tool definitions and its connector
-schemas before it can so much as look at an empty folder. Do that around the
-clock and you are paying a monthly subscription's worth to be told "no new
-files" seven hundred times.
+The obvious way to build this is to give an AI agent a schedule: wake up every
+hour, look in the folder, file whatever is there. That works, and it is
+expensive in a way that is easy to miss. An agent starting a fresh session has
+to read its instructions, its tool definitions and its connector schemas before
+it can do anything at all — including before it can find out the folder is
+empty. Most hours it will be empty. You end up paying a monthly subscription's
+worth to be told "nothing new" several hundred times.
 
-So the trigger and the brain are separated. The thing that wakes up every
-fifteen minutes is not an LLM — it is a folder listing, which is free. The
-model is only ever invoked once there is a page in front of it. An idle day
-costs nothing at all, and a busy one costs about a penny a document.
+So the two jobs are kept apart. Checking whether there is work is cheap and
+constant. Doing the work is expensive and rare. The thing that wakes up every
+fifteen minutes is a folder listing, which costs nothing, and the model is only
+ever invoked once there is a page in front of it. An idle day costs nothing at
+all; a busy one costs about a penny a document.
 
-Everything else follows from that split.
+That leaves the question of what should do the waking up, and Apps Script wins
+mostly by already being there. It is free. It can already read your Drive, so
+there is no OAuth flow to build, no service account, no key to rotate. It has a
+scheduler built in, and somewhere to keep the API key. And it runs on Google's
+machines, so nothing on your desk has to be switched on for your scans to get
+filed.
+
+The alternatives all cost you something. A cron job on your laptop is free too,
+but it only files things while the laptop is awake. A small cloud function
+would work, but then you are building the Drive authentication that Apps Script
+hands you for nothing.
 
 ## How it works
 
