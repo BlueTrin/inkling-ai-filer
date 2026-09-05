@@ -249,3 +249,7 @@ clasp push
 ```
 
 From then on `src/Code.gs` is edited here, tested with `npm test`, and pushed.
+
+## Licence
+
+MIT — see `LICENSE`.

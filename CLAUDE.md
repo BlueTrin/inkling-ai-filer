@@ -54,10 +54,9 @@ steps in the README instead.
    deployment, the taxonomy needs folders for it, and `MIN_CONFIDENCE` probably
    needs to be higher for those than the global 0.6 — a misfiled insurance
    renewal costs more than a misfiled shopping list.
-2. **LICENSE.** Absent, and needed before this is useful to anyone else.
-3. **`_Unsorted` notification.** A `MailApp` nudge, or is a periodic glance
+2. **`_Unsorted` notification.** A `MailApp` nudge, or is a periodic glance
    enough?
-4. **Retention.** Does anything ever leave Drive, or does the archive just grow?
+3. **Retention.** Does anything ever leave Drive, or does the archive just grow?
 
 ## Conventions
 

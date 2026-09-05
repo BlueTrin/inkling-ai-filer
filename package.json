@@ -2,6 +2,7 @@
   "name": "inkling-ai-filer",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Handwritten notes in, named and filed by Claude. Half a cent a page, nothing on idle days.",
   "scripts": {
     "test": "node --test test/*.test.js"
