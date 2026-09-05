@@ -1,0 +1,12 @@
+# clasp holds the Apps Script project id — local only
+.clasp.json
+
+# local overrides, never committed
+*.local.gs
+.env
+
+node_modules/
+.DS_Store
+
+# private design notes — never committed, this repo is public
+docs/
