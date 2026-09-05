@@ -145,9 +145,11 @@ change.
 before there is a trigger that could repeat a bad result every quarter of an
 hour. Drop a 40 MB file in `Inbox` — it should be parked in `_Unsorted` with
 no API call at all, since the size check runs before anything expensive. Then
-set the API key to nonsense and add a page: expect three retries, a note in the
-file's description, and the file still sitting safely in `Inbox`. Put the real
-key back and it files on the next run.
+set the API key to nonsense and add a page: expect a single failed call — an
+auth error is not retried, because a bad key will still be bad in three
+seconds — a `RETRY` row in the index, `attempts=1` written into the file's
+description, and the file still sitting safely in `Inbox`. Put the real key
+back and it files on the next run.
 
 **8. Schedule it.** Triggers → Add Trigger → `watchInbox`, time-driven, every
 fifteen minutes. Polling more often costs nothing extra — an empty check is
@@ -336,6 +338,7 @@ one glance.
 | Model returns prose | Parse throws, counts as an attempt, 3 strikes to `_Unsorted` |
 | Model names a folder that does not exist | Confidence 0, no retry, and the name is kept as a suggestion |
 | API 429 or 5xx | 3 retries, exponential backoff, then the attempt counter |
+| API 401 or other 4xx | Thrown at once, no retry — a bad key will still be bad on the retry. Counts as one attempt |
 | Runaway loop | `DAILY_CALL_CAP` |
 | Oversized scan | Parked before any API call |
 | Script crashes mid-batch | The next run resumes where it stopped, because location is the queue |
